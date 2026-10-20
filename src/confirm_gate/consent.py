@@ -102,7 +102,7 @@ _FILLER = {
     "select", "take", "go", "with", "it", "is", "its", "that's", "thats", "one", "this", "that",
     "um", "uh", "umm", "hmm", "er", "ah", "oh", "ji", "hai", "wala", "wali", "wale", "vala", "waala",
     "karo", "kar", "do", "say", "said", "of", "these", "those", "them", "all", "thank", "you", "thanks",
-    "just", "now", "the", "is", "am", "mean", "meant", "like", "would", "id", "i'd", "yes", "no",
+    "just", "now", "am", "mean", "meant", "like", "would", "id", "i'd", "yes", "no",
 }
 
 
