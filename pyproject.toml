@@ -1,0 +1,37 @@
+[project]
+name = "confirm-gate-mcp"
+version = "0.1.0"
+description = "Confirm-before-act for MCP: write tools become pending actions that only the user's own voice or tap can release."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Prashant Thakur" }]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.1,<3",
+    "starlette>=0.40",
+]
+keywords = ["mcp", "model-context-protocol", "agents", "safety", "consent", "human-in-the-loop"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+dynamodb = ["boto3>=1.35"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "moto[dynamodb]>=5", "boto3>=1.35", "httpx>=0.27", "uvicorn>=0.30"]
+
+[project.scripts]
+confirm-gate = "confirm_gate.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/confirm_gate"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
