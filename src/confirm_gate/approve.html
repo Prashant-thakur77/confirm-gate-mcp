@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approve actions</title>
+<style>
+  :root { --bg: #fbf8f3; --ink: #14213d; --muted: #3d4a63; --card: #ffffff; --line: #14213d; --accent: #9a4a00;
+          --ok: #0f5132; --okbg: #e3f1e8; --warn: #6b2a00; --warnbg: #fdebd7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1626; --ink: #f4f1ea; --muted: #c9d1e0; --card: #17223a; --line: #f4f1ea; --accent: #ffb454;
+            --ok: #b9f0cf; --okbg: #143524; --warn: #ffd8b0; --warnbg: #3a2410; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 20px/1.45 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 20px; margin: 0 0 16px; }
+  .card h2 { font-size: 1.15rem; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+  .option { font-size: 1.5rem; font-weight: 700; margin: 0 0 12px; }
+  .tag { display: inline-block; border: 2px solid var(--line); border-radius: 999px; padding: 0 10px; font-size: .85rem; margin-right: 8px; }
+  .tag.warn { background: var(--warnbg); color: var(--warn); border-color: var(--warn); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  button, input { font: inherit; }
+  button { min-height: 56px; min-width: 120px; border-radius: 12px; border: 2px solid var(--line); background: var(--card);
+           color: var(--ink); padding: 8px 18px; cursor: pointer; font-weight: 700; }
+  button.primary { background: var(--ink); color: var(--bg); }
+  button:focus-visible, input:focus-visible { outline: 4px solid var(--accent); outline-offset: 3px; }
+  input { min-height: 56px; border-radius: 12px; border: 2px solid var(--line); padding: 8px 14px; width: 12ch;
+          letter-spacing: .2em; background: var(--card); color: var(--ink); }
+  .receipt { background: var(--okbg); color: var(--ok); border-color: var(--ok); }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  @media (prefers-reduced-motion: no-preference) { .card { transition: transform .15s; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Approve actions</h1>
+  <p class="lead">Nothing your AI agent asks to change happens until you approve it here.</p>
+  <div id="live" class="sr" aria-live="assertive"></div>
+  <section id="pair" class="card" hidden>
+    <h2 id="pair-h">Pair this device</h2>
+    <form id="pair-form" aria-labelledby="pair-h">
+      <label for="code">Pairing code (shown where confirm-gate is running)</label>
+      <div class="row"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+      <button class="primary" type="submit">Pair</button></div>
+      <p id="pair-err" class="muted" role="alert"></p>
+    </form>
+  </section>
+  <section id="pending" aria-label="Waiting for you"></section>
+  <section id="done" aria-label="Recent decisions"></section>
+</main>
+<script>
+const enc = new TextEncoder();
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+const b64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4)), (c) => c.charCodeAt(0));
+let device = null;
+try { device = JSON.parse(localStorage.getItem("confirm-gate.device") || "null"); } catch {}
+
+async function signed(method, path, payload) {
+  const body = payload === undefined ? "" : JSON.stringify(payload);
+  const rand = hex(crypto.getRandomValues(new Uint8Array(6)));
+  const full = path + (path.includes("?") ? "&" : "?") + "r=" + rand;
+  const ts = Math.floor(Date.now() / 1000);
+  const bodyHash = hex(await crypto.subtle.digest("SHA-256", enc.encode(body)));
+  const key = await crypto.subtle.importKey("raw", b64url(device.key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = hex(await crypto.subtle.sign("HMAC", key, enc.encode(`${method}\n${full}\n${ts}\n${bodyHash}`)));
+  const headers = { "x-device-id": device.device_id, "x-timestamp": String(ts), "x-signature": sig };
+  if (body) headers["content-type"] = "application/json";
+  const r = await fetch(full, { method, headers, body: body || undefined });
+  return { status: r.status, json: await r.json() };
+}
+
+function say(text) { document.getElementById("live").textContent = text; }
+const seen = new Set();
+let shown = null;
+
+function render(sets) {
+  const key = sets.map((s) => s.pending_id).join(",");
+  if (key === shown) return;  // redraw only when the requests change, so focus stays where the user is
+  shown = key;
+  const box = document.getElementById("pending");
+  box.replaceChildren();
+  if (!sets.length) {
+    const p = document.createElement("p"); p.className = "muted"; p.textContent = "Nothing is waiting for you.";
+    box.append(p); return;
+  }
+  for (const set of sets) {
+    if (!seen.has(set.pending_id)) { seen.add(set.pending_id); say(`Your agent wants to: ${set.options.map((o) => o.text).join(", or ")}`); }
+    const card = document.createElement("article"); card.className = "card";
+    card.setAttribute("aria-label", `Request ${set.pending_id}`);
+    const h = document.createElement("h2");
+    h.textContent = set.origin === "assistant" ? "Your agent wants to:" : "Did you mean:";
+    card.append(h);
+    for (const o of set.options) {
+      const div = document.createElement("div");
+      const t = document.createElement("p"); t.className = "option"; t.textContent = o.text;
+      div.append(t);
+      if (o.risk === "high") { const tag = document.createElement("span"); tag.className = "tag warn"; tag.textContent = "Asks twice"; div.append(tag); }
+      const row = document.createElement("div"); row.className = "row";
+      const yes = document.createElement("button"); yes.className = "primary";
+      yes.textContent = set.stage === "final" ? "Yes, do it" : (set.options.length > 1 ? `Choose ${o.n}` : "Approve");
+      yes.onclick = () => answer(set, set.stage === "final" ? { answer: "yes" } : { option: o.n });
+      row.append(yes);
+      div.append(row);
+      card.append(div);
+    }
+    const row = document.createElement("div"); row.className = "row";
+    const no = document.createElement("button"); no.textContent = "No, don't";
+    no.onclick = () => answer(set, { answer: "no" });
+    row.append(no);
+    const left = document.createElement("span"); left.className = "muted";
+    left.textContent = `Expires ${new Date(Date.now() + set.expires_in_s * 1000).toLocaleTimeString()}`;
+    row.append(left);
+    card.append(row);
+    box.append(card);
+  }
+}
+
+async function answer(set, choice) {
+  const ev = await signed("POST", "/device/evidence", { pending_id: set.pending_id, nonce: set.nonce, kind: "tap", ...choice });
+  if (ev.status !== 200) { say(ev.json.error || "That did not work."); return; }
+  const out = await signed("POST", "/device/confirm", { pending_id: set.pending_id, evidence_ref: ev.json.evidence_ref });
+  const done = document.getElementById("done");
+  const card = document.createElement("article"); card.className = "card receipt";
+  const msg = out.json.message || out.json.reason || out.json.status;
+  card.textContent = msg + (out.json.receipt ? ` (receipt ${out.json.receipt.receipt_id})` : "");
+  done.prepend(card);
+  say(msg);
+  poll();
+}
+
+async function poll() {
+  if (!device) return;
+  const r = await signed("GET", "/device/pending");
+  if (r.status === 401) { localStorage.removeItem("confirm-gate.device"); device = null; showPair(); return; }
+  render(r.json.pending || []);
+}
+
+function showPair() { document.getElementById("pair").hidden = false; document.getElementById("code").focus(); }
+
+document.getElementById("pair-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const r = await fetch("/device/pair", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: document.getElementById("code").value.trim(), name: navigator.userAgent.slice(0, 60) }) });
+  const j = await r.json();
+  if (r.status !== 200) { document.getElementById("pair-err").textContent = j.error || "That code did not work."; return; }
+  device = j; try { localStorage.setItem("confirm-gate.device", JSON.stringify(j)); } catch {}
+  document.getElementById("pair").hidden = true; say("Paired. Requests will appear here."); poll();
+};
+
+if (!device) showPair(); else poll();
+setInterval(poll, 1500);
+</script>
+</body>
+</html>
