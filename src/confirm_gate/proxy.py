@@ -75,11 +75,25 @@ class GatedServer:
         if install_confirm:
             self._install_confirm()
 
-    def read(self, name: str | None = None, *, description: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def read(self, name: str | None = None, *, description: str | None = None,
+             pass_user: bool = False) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a read tool. With ``pass_user`` the tool gets ``user_id`` from the server, not the caller."""
+
         def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or fn.__name__
-            self.registry.read(tool_name)(fn)
-            self.mcp.add_tool(fn, name=tool_name, description=description or inspect.getdoc(fn),
+            self.registry.read(tool_name, pass_user=pass_user)(fn)
+            exposed = fn
+            if pass_user:
+                sig = inspect.signature(fn, eval_str=True)
+                public = _without_user(sig)
+
+                @functools.wraps(fn)
+                def with_user(*args: Any, **kwargs: Any) -> Any:
+                    return fn(*args, **kwargs, user_id=self.user())
+
+                _expose(with_user, public, sig.return_annotation)
+                exposed = with_user
+            self.mcp.add_tool(exposed, name=tool_name, description=description or inspect.getdoc(fn),
                               annotations=ToolAnnotations(read_only_hint=True))
             return fn
 
@@ -92,23 +106,28 @@ class GatedServer:
         risk: Risk | Callable[[dict[str, Any]], Risk] = "low",
         preview: Callable[[dict[str, Any]], str] | None = None,
         description: str | None = None,
+        pass_user: bool = False,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a write tool. Calling it only proposes; ``confirm`` with user evidence runs it.
+
+        With ``pass_user`` the executor receives the ``user_id`` of the card set's owner at confirm
+        time; callers cannot pass one.
+        """
+
         def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or fn.__name__
-            self.registry.write(tool_name, risk=risk, preview=preview)(fn)
+            self.registry.write(tool_name, risk=risk, preview=preview, pass_user=pass_user)(fn)
             sig = inspect.signature(fn, eval_str=True)
+            public = _without_user(sig) if pass_user else sig
 
             @functools.wraps(fn)
             def propose(*args: Any, **kwargs: Any) -> dict[str, Any]:
-                bound = sig.bind(*args, **kwargs)
+                bound = public.bind(*args, **kwargs)
                 bound.apply_defaults()
                 ps = self.gate.propose(self.user(), [(tool_name, dict(bound.arguments))], origin="assistant")
                 return proposal_reply(self.gate, ps.pending_id)
 
-            propose.__signature__ = sig.replace(return_annotation=dict[str, Any])  # type: ignore[attr-defined]
-            propose.__annotations__ = {**{k: p.annotation for k, p in sig.parameters.items()},
-                                       "return": dict[str, Any]}
-            del propose.__wrapped__  # the schema must come from __signature__, not the executor
+            _expose(propose, public, dict[str, Any])
             self.mcp.add_tool(propose, name=tool_name,
                               description=(description or inspect.getdoc(fn) or tool_name) + GATE_NOTE,
                               annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
@@ -130,6 +149,18 @@ class GatedServer:
                           annotations=ToolAnnotations(read_only_hint=False))
         self.mcp.add_tool(pending_status, name="pending_status",
                           annotations=ToolAnnotations(read_only_hint=True))
+
+
+def _without_user(sig: inspect.Signature) -> inspect.Signature:
+    return sig.replace(parameters=[p for n, p in sig.parameters.items() if n != "user_id"])
+
+
+def _expose(fn: Callable[..., Any], sig: inspect.Signature, returns: Any) -> None:
+    """Make MCP build the tool schema from *sig*, not from the wrapped executor."""
+    fn.__signature__ = sig.replace(return_annotation=returns)  # type: ignore[attr-defined]
+    fn.__annotations__ = {**{k: p.annotation for k, p in sig.parameters.items()}, "return": returns}
+    if hasattr(fn, "__wrapped__"):
+        del fn.__wrapped__  # type: ignore[attr-defined]
 
 
 def _text_result(payload: Any) -> types.CallToolResult:

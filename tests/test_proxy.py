@@ -139,3 +139,38 @@ async def test_wrap_upstream_gates_any_mcp_server() -> None:
         out = _text(await c.call_tool("confirm", {"pending_id": p["pending_id"], "evidence_ref": ev["evidence_ref"]}))
     assert out["status"] == "done", out
     assert state["files"] == {"a": "hi"}
+
+
+async def test_a_write_runs_for_the_user_who_confirmed_never_one_the_agent_names() -> None:
+    clock = Clock()
+    store = MemoryStore()
+    mcp = MCPServer("multi-user")
+    current = {"user": "alice"}
+    gs = GatedServer(mcp, store=store, clock=clock, user=lambda: current["user"])
+    ran_for: list[str] = []
+
+    @gs.write(risk="low", pass_user=True)
+    def home_set(device: str, state: str, user_id: str) -> dict[str, Any]:
+        """Switch a device."""
+        ran_for.append(user_id)
+        return {"ok": True}
+
+    @gs.read(pass_user=True)
+    def home_status(user_id: str) -> dict[str, Any]:
+        """Status."""
+        return {"user": user_id}
+
+    devices = DeviceRegistry(store, clock=clock)
+    alice = devices.pair(devices.start_pairing("alice"), name="a")
+    async with Client(mcp) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+        assert "user_id" not in tools["home_set"].input_schema["properties"]
+        assert "user_id" not in tools["home_status"].input_schema.get("properties", {})
+        assert _text(await c.call_tool("home_status", {}))["user"] == "alice"
+        p = _text(await c.call_tool("home_set", {"device": "fan", "state": "on"}))
+        current["user"] = "mallory"  # whoever is calling later does not matter
+        nonce = gs.gate.device_pending(alice)[0]["nonce"]
+        ev = gs.gate.submit_tap(alice, p["pending_id"], nonce, option=1)
+        out = _text(await c.call_tool("confirm", {"pending_id": p["pending_id"], "evidence_ref": ev["evidence_ref"]}))
+    assert out["status"] == "done"
+    assert ran_for == ["alice"]

@@ -376,17 +376,25 @@ class Gate:
         return {"status": "done", "pending_id": plan.pending["pending_id"], "result": result,
                 "receipt": rec, "message": receipts.to_text(rec)}
 
+    @staticmethod
+    def _call_args(plan: _Plan) -> dict[str, Any]:
+        kwargs = dict(plan.option["args"])
+        if plan.action.meta.get("pass_user"):
+            kwargs["user_id"] = plan.pending["user_id"]  # the user whose card set this is, never an argument
+        return kwargs
+
     def confirm(self, pending_id: Any, evidence_ref: Any = None) -> dict[str, Any]:
         """Run the chosen option if, and only if, the user's evidence releases it."""
         done, plan = self._prepare(pending_id, evidence_ref)
         if done is not None:
             return done
         assert plan is not None
+        kwargs = self._call_args(plan)
         try:
             if plan.action.is_async:
-                result = asyncio.run(plan.action.fn(**plan.option["args"]))
+                result = asyncio.run(plan.action.fn(**kwargs))
             else:
-                result = plan.action.fn(**plan.option["args"])
+                result = plan.action.fn(**kwargs)
         except Exception as exc:
             return self._finish(plan, error=exc)
         return self._finish(plan, result)
@@ -396,11 +404,12 @@ class Gate:
         if done is not None:
             return done
         assert plan is not None
+        kwargs = self._call_args(plan)
         try:
             if plan.action.is_async:
-                result = await plan.action.fn(**plan.option["args"])
+                result = await plan.action.fn(**kwargs)
             else:
-                result = await anyio.to_thread.run_sync(lambda: plan.action.fn(**plan.option["args"]))
+                result = await anyio.to_thread.run_sync(lambda: plan.action.fn(**kwargs))
         except Exception as exc:
             return self._finish(plan, error=exc)
         return await anyio.to_thread.run_sync(self._finish, plan, result)
