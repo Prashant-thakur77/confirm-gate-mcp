@@ -190,6 +190,18 @@ class Gate:
         docs.sort(key=lambda d: d["issued_at"])
         return [{**self.public_view(d), "nonce": d["nonce"], "context": d.get("context") or {}} for d in docs]
 
+    def device_view(self, device: Device, pending_id: str) -> dict[str, Any] | None:
+        """One open card set with its nonce, read consistently, if it belongs to the device's user."""
+        try:
+            self._device_ok(device)
+        except EvidenceRejected:
+            return None
+        d = self.store.get("pending", str(pending_id or ""))
+        if d is None or d["user_id"] != device.user_id or d.get("consumed_at") is not None \
+                or d["expires_at"] < self.clock():
+            return None
+        return {**self.public_view(d), "nonce": d["nonce"], "context": d.get("context") or {}}
+
     def _open_for(self, device: Device, pending_id: str, nonce: str) -> dict[str, Any]:
         self._device_ok(device)
         doc = self.store.get("pending", str(pending_id or ""))

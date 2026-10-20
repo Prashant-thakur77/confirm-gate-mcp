@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -51,6 +52,9 @@ def test_set_once_on_a_missing_key_fails(any_store: Any) -> None:
 
 
 def test_set_once_under_contention(any_store: Any) -> None:
+    if isinstance(any_store, DynamoStore):
+        pytest.skip("moto's DynamoDB mock is not thread-safe (conditional updates race inside the mock); "
+                    "real DynamoDB is covered by test_real_dynamodb_set_once_under_contention")
     any_store.put("pending", "p", {"consumed_at": None})
     wins: list[bool] = []
     barrier = threading.Barrier(10)
@@ -79,3 +83,27 @@ def test_scan_filters_by_fields(any_store: Any) -> None:
 def test_floats_and_bools_survive(any_store: Any) -> None:
     any_store.put("k", "1", {"f": 0.125, "b": True, "n": None, "s": "", "l": []})
     assert any_store.get("k", "1") == {"f": 0.125, "b": True, "n": None, "s": "", "l": []}
+
+
+@pytest.mark.skipif(not os.environ.get("CONFIRM_GATE_IT_TABLE"), reason="set CONFIRM_GATE_IT_TABLE to a real DynamoDB table")
+def test_real_dynamodb_set_once_under_contention() -> None:
+    import uuid
+
+    store = DynamoStore(os.environ["CONFIRM_GATE_IT_TABLE"], region=os.environ.get("AWS_REGION", "us-east-1"))
+    for _ in range(20):
+        key = "it-" + uuid.uuid4().hex[:12]
+        store.put("racetest", key, {"consumed_at": None})
+        wins: list[bool] = []
+        barrier = threading.Barrier(16)
+
+        def go(i: int, key: str = key) -> None:
+            barrier.wait()
+            wins.append(store.set_once("racetest", key, "consumed_at", float(i)))
+
+        ts = [threading.Thread(target=go, args=(i,)) for i in range(16)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        store._c.delete_item(TableName=store.table, Key={"pk": {"S": f"racetest#{key}"}})
+        assert wins.count(True) == 1

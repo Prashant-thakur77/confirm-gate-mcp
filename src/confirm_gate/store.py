@@ -129,6 +129,9 @@ class SqliteStore:
         return [d for d in docs if _matches(d, equals)]
 
 
+KIND_INDEX = "kind-index"
+
+
 class DynamoStore:
     """One DynamoDB table, key ``pk = "<kind>#<key>"``, the document as a JSON string.
 
@@ -143,13 +146,17 @@ class DynamoStore:
             client = boto3.client("dynamodb", region_name=region)
         self.table = table_name
         self._c = client
+        self._has_index: bool | None = None
 
     @staticmethod
     def create_table(table_name: str, *, client: Any) -> None:
         client.create_table(
             TableName=table_name,
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"},
+                                  {"AttributeName": "kind", "AttributeType": "S"}],
+            GlobalSecondaryIndexes=[{"IndexName": KIND_INDEX, "KeySchema": [{"AttributeName": "kind", "KeyType": "HASH"}],
+                                     "Projection": {"ProjectionType": "ALL"}}],
             BillingMode="PAY_PER_REQUEST",
         )
         client.get_waiter("table_exists").wait(TableName=table_name)
@@ -218,16 +225,36 @@ class DynamoStore:
             raise
 
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]:
-        kwargs: dict[str, Any] = {
-            "TableName": self.table,
-            "FilterExpression": "#k = :k",
-            "ExpressionAttributeNames": {"#k": "kind"},
-            "ExpressionAttributeValues": {":k": {"S": kind}},
-            "ConsistentRead": True,
-        }
+        """Every doc of *kind* matching *equals*: a Query on the kind index, or a table Scan without one."""
+        names = {"#k": "kind"}
+        values: dict[str, Any] = {":k": {"S": kind}}
+        filters = []
+        for i, (field, value) in enumerate(equals.items()):
+            if isinstance(value, str) and value:
+                names[f"#f{i}"] = f"f_{field}"
+                values[f":f{i}"] = {"S": value}
+                filters.append(f"#f{i} = :f{i}")
+        kwargs: dict[str, Any] = {"TableName": self.table, "ExpressionAttributeNames": names,
+                                  "ExpressionAttributeValues": values}
+        if filters:
+            kwargs["FilterExpression"] = " AND ".join(filters)
+        if self._has_index is not False:
+            kwargs.update(IndexName=KIND_INDEX, KeyConditionExpression="#k = :k")
+            op = self._c.query
+        else:
+            kwargs["FilterExpression"] = " AND ".join(["#k = :k", *filters])
+            kwargs["ConsistentRead"] = True
+            op = self._c.scan
         docs: list[dict[str, Any]] = []
         while True:
-            resp = self._c.scan(**kwargs)
+            try:
+                resp = op(**kwargs)
+            except Exception as exc:  # an older table without the index
+                if self._has_index is None and "index" in str(exc).lower():
+                    self._has_index = False
+                    return self.scan(kind, **equals)
+                raise
+            self._has_index = self._has_index if op is self._c.scan else True
             docs.extend(json.loads(i["doc"]["S"]) for i in resp.get("Items", []))
             if not resp.get("LastEvaluatedKey"):
                 break

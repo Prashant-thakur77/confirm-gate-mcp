@@ -313,3 +313,11 @@ def test_the_receipt_says_who_what_when_and_how_and_is_tamper_evident(gate: Gate
     receipt["what"]["args"]["state"] = "off"
     assert not verify_fingerprint(receipt)
     assert gate.receipts("u1")[0]["receipt_id"] == receipt["receipt_id"]
+
+
+def test_device_view_shows_only_the_devices_own_open_set(gate: Gate, devices: Any, device: Any) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    assert gate.device_view(device, ps.pending_id)["nonce"] == ps.nonce
+    other = devices.pair(devices.start_pairing("u2"), name="other")
+    assert gate.device_view(other, ps.pending_id) is None
+    assert gate.device_view(device, "p_nope") is None
