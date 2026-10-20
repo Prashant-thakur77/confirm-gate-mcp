@@ -171,6 +171,16 @@ class Gate:
             return {"pending_id": pending_id, "state": "unknown"}
         return self.public_view(doc)
 
+    def withdraw_open(self, user_id: str, *, reason: str = "withdrawn") -> int:
+        """Close every open card set for *user_id* without running anything. Returns how many were closed."""
+        closed = 0
+        for d in self.store.scan("pending", user_id=user_id):
+            if d.get("consumed_at") is None and self.store.set_once(
+                    "pending", d["pending_id"], "consumed_at", self.clock(), {"outcome": reason}):
+                closed += 1
+                self._emit("withdrawn", pending_id=d["pending_id"], user_id=user_id, reason=reason)
+        return closed
+
     # the device side ---------------------------------------------------------------
     def _device_ok(self, device: Device) -> dict[str, Any]:
         doc = self.store.get("device", device.device_id)

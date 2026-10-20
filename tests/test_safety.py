@@ -346,3 +346,13 @@ def test_device_transcripts_obey_every_other_check(gate: Gate, house: House, dev
     with pytest.raises(EvidenceRejected):
         gate.submit_transcript(device, ps.pending_id, nonce, "one", source="alexa")
     assert house.calls == 0
+
+
+def test_withdrawing_open_sets_runs_nothing_and_blocks_later_evidence(gate: Gate, house: House, device: Any) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    ev = gate.submit_tap(device, ps.pending_id, nonce, option=1)
+    assert gate.withdraw_open("u1") == 1
+    assert gate.device_pending(device) == []
+    assert gate.confirm(ps.pending_id, ev["evidence_ref"])["status"] == "refused"
+    assert house.calls == 0
