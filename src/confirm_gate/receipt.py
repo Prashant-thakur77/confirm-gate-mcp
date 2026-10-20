@@ -94,7 +94,7 @@ def verify_fingerprint(receipt: dict[str, Any]) -> bool:
 
 def to_text(receipt: dict[str, Any]) -> str:
     """One sentence a screen reader or speaker can say."""
-    how = "your voice" if receipt["how"]["channel"] == "voice" else "your tap"
+    how = {"voice": "your voice", "transcript": "your voice"}.get(receipt["how"]["channel"], "your tap")
     said = receipt["evidence"].get("transcript")
     heard = f' (heard "{said}")' if said else ""
     return f"Done: {receipt['what']['shown_as']}. Confirmed by {how}{heard}."

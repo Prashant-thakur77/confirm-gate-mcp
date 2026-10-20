@@ -321,3 +321,28 @@ def test_device_view_shows_only_the_devices_own_open_set(gate: Gate, devices: An
     other = devices.pair(devices.start_pairing("u2"), name="other")
     assert gate.device_view(other, ps.pending_id) is None
     assert gate.device_view(device, "p_nope") is None
+
+
+def test_a_paired_voice_device_can_send_its_own_transcript(gate: Gate, house: House, device: Any) -> None:
+    """A voice device (e.g. a smart speaker skill) recognises speech itself and sends the words, signed."""
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    ev = gate.submit_transcript(device, ps.pending_id, nonce, "the second one", source="alexa")
+    assert ev["decision"]["kind"] == "choose" and ev["decision"]["option"] == 2
+    out = gate.confirm(ps.pending_id, ev["evidence_ref"])
+    assert out["status"] == "done" and house.devices["lights"] == "on"
+    assert out["receipt"]["evidence"]["channel"] == "transcript"
+    assert out["receipt"]["evidence"]["transcriber"] == "alexa"
+
+
+def test_device_transcripts_obey_every_other_check(gate: Gate, house: House, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    with pytest.raises(EvidenceRejected):
+        gate.submit_transcript(device, ps.pending_id, "wrong-nonce", "one", source="alexa")
+    nonce = gate.device_pending(device)[0]["nonce"]
+    unclear = gate.submit_transcript(device, ps.pending_id, nonce, "yes", source="alexa")
+    assert gate.confirm(ps.pending_id, unclear["evidence_ref"])["status"] == "refused"
+    clock.advance(gate.pending_ttl + 1)
+    with pytest.raises(EvidenceRejected):
+        gate.submit_transcript(device, ps.pending_id, nonce, "one", source="alexa")
+    assert house.calls == 0

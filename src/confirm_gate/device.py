@@ -89,8 +89,12 @@ def device_routes(
                 out = await anyio.to_thread.run_sync(
                     lambda: gate.submit_voice(device, pid, nonce, audio, transcribe=transcribe,
                                               media_ref=ref, transcriber=transcriber))
+            elif kind == "transcript":
+                out = await anyio.to_thread.run_sync(
+                    lambda: gate.submit_transcript(device, pid, nonce, str(data.get("transcript", "")),
+                                                   source=str(data.get("source", "device"))))
             else:
-                raise ValueError("kind must be tap or voice")
+                raise ValueError("kind must be tap, voice or transcript")
         except EvidenceRejected as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         except ValueError as exc:
