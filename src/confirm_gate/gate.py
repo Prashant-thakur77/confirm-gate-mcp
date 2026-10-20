@@ -396,37 +396,54 @@ class Gate:
         return kwargs
 
     def confirm(self, pending_id: Any, evidence_ref: Any = None) -> dict[str, Any]:
-        """Run the chosen option if, and only if, the user's evidence releases it."""
+        """Run the chosen option if, and only if, the user's evidence releases it.
+
+        ``timing.gate_ms`` is the time the gate itself added (checks, atomic consumption, receipt);
+        ``timing.action_ms`` is the action's own run time.
+        """
+        t0 = time.perf_counter()
         done, plan = self._prepare(pending_id, evidence_ref)
         if done is not None:
-            return done
+            return _timed(done, t0)
         assert plan is not None
         kwargs = self._call_args(plan)
+        t1 = time.perf_counter()
         try:
             if plan.action.is_async:
                 result = asyncio.run(plan.action.fn(**kwargs))
             else:
                 result = plan.action.fn(**kwargs)
         except Exception as exc:
-            return self._finish(plan, error=exc)
-        return self._finish(plan, result)
+            return _timed(self._finish(plan, error=exc), t0, t1, time.perf_counter())
+        t2 = time.perf_counter()
+        return _timed(self._finish(plan, result), t0, t1, t2)
 
     async def aconfirm(self, pending_id: Any, evidence_ref: Any = None) -> dict[str, Any]:
+        t0 = time.perf_counter()
         done, plan = await anyio.to_thread.run_sync(self._prepare, pending_id, evidence_ref)
         if done is not None:
-            return done
+            return _timed(done, t0)
         assert plan is not None
         kwargs = self._call_args(plan)
+        t1 = time.perf_counter()
         try:
             if plan.action.is_async:
                 result = await plan.action.fn(**kwargs)
             else:
                 result = await anyio.to_thread.run_sync(lambda: plan.action.fn(**kwargs))
         except Exception as exc:
-            return self._finish(plan, error=exc)
-        return await anyio.to_thread.run_sync(self._finish, plan, result)
+            return _timed(self._finish(plan, error=exc), t0, t1, time.perf_counter())
+        t2 = time.perf_counter()
+        return _timed(await anyio.to_thread.run_sync(self._finish, plan, result), t0, t1, t2)
 
     def receipts(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
         rows = self.store.scan("receipt", user_id=user_id)
         rows.sort(key=lambda r: r.get("sort_at", 0), reverse=True)
         return [{k: v for k, v in r.items() if k not in ("user_id", "sort_at")} for r in rows[:limit]]
+
+
+def _timed(out: dict[str, Any], t0: float, t1: float | None = None, t2: float | None = None) -> dict[str, Any]:
+    end = time.perf_counter()
+    action = (t2 - t1) if (t1 is not None and t2 is not None) else 0.0
+    out["timing"] = {"gate_ms": round((end - t0 - action) * 1000, 2), "action_ms": round(action * 1000, 2)}
+    return out

@@ -225,7 +225,11 @@ class DynamoStore:
             raise
 
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]:
-        """Every doc of *kind* matching *equals*: a Query on the kind index, or a table Scan without one."""
+        """Every doc of *kind* matching *equals*: a Query on the kind index, or a table Scan without one.
+
+        A missing index (an older table) switches to scans for good; an index that is still backfilling
+        is retried on the next call.
+        """
         names = {"#k": "kind"}
         values: dict[str, Any] = {":k": {"S": kind}}
         filters = []
@@ -234,29 +238,33 @@ class DynamoStore:
                 names[f"#f{i}"] = f"f_{field}"
                 values[f":f{i}"] = {"S": value}
                 filters.append(f"#f{i} = :f{i}")
-        kwargs: dict[str, Any] = {"TableName": self.table, "ExpressionAttributeNames": names,
-                                  "ExpressionAttributeValues": values}
-        if filters:
-            kwargs["FilterExpression"] = " AND ".join(filters)
+        base: dict[str, Any] = {"TableName": self.table, "ExpressionAttributeNames": names,
+                                "ExpressionAttributeValues": values}
         if self._has_index is not False:
-            kwargs.update(IndexName=KIND_INDEX, KeyConditionExpression="#k = :k")
-            op = self._c.query
-        else:
-            kwargs["FilterExpression"] = " AND ".join(["#k = :k", *filters])
-            kwargs["ConsistentRead"] = True
-            op = self._c.scan
+            try:
+                return [d for d in self._pages(self._c.query, {**base, "IndexName": KIND_INDEX,
+                                                                "KeyConditionExpression": "#k = :k",
+                                                                **({"FilterExpression": " AND ".join(filters)}
+                                                                   if filters else {})})
+                        if _matches(d, equals)]
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "backfilling" in msg:
+                    pass  # the index is being built: scan this time, try the index again next time
+                elif "index" in msg:
+                    self._has_index = False
+                else:
+                    raise
+        scan = {**base, "FilterExpression": " AND ".join(["#k = :k", *filters]), "ConsistentRead": True}
+        return [d for d in self._pages(self._c.scan, scan) if _matches(d, equals)]
+
+    @staticmethod
+    def _pages(op: Any, kwargs: dict[str, Any]) -> list[dict[str, Any]]:
         docs: list[dict[str, Any]] = []
         while True:
-            try:
-                resp = op(**kwargs)
-            except Exception as exc:  # an older table without the index
-                if self._has_index is None and "index" in str(exc).lower():
-                    self._has_index = False
-                    return self.scan(kind, **equals)
-                raise
-            self._has_index = self._has_index if op is self._c.scan else True
+            resp = op(**kwargs)
             docs.extend(json.loads(i["doc"]["S"]) for i in resp.get("Items", []))
             if not resp.get("LastEvaluatedKey"):
-                break
-            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-        return [d for d in docs if _matches(d, equals)]
+                return docs
+            kwargs = {**kwargs, "ExclusiveStartKey": resp["LastEvaluatedKey"]}
+
