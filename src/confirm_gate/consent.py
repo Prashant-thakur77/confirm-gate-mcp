@@ -19,6 +19,11 @@ Rules, each one there because the alternative produced a false accept:
 * More than two words outside the confirmation vocabulary means the user was
   saying something else ("order two of the blue cables now").
 * No sound-alikes: "to" is not "two". A mishearing is refused, not repaired.
+* Hesitation, questions and qualifiers make it unclear: "ok, hang on", "okay, who is it?", "yes but",
+  "haan, kaun hai". A person still deciding has not decided. (A trailing "?" alone is not a question:
+  recognisers add one to a rising "yes".)
+* A Devanagari word with no mapping counts as an unknown word instead of disappearing, so a long Hindi
+  sentence that merely contains "haan" is not a yes.
 """
 
 from __future__ import annotations
@@ -74,6 +79,20 @@ DEVANAGARI = {
     "थर्ड": "third",
     "ओके": "okay",
     "कैंसल": "cancel",
+    "लेकिन": "lekin",
+    "मगर": "magar",
+    "कौन": "kaun",
+    "क्या": "kya",
+    "क्यों": "kyun",
+    "कब": "kab",
+    "कहाँ": "kahan",
+    "कैसे": "kaise",
+    "बाद": "baad",
+    "ज़रा": "zara",
+    "जरा": "zara",
+    "थोड़ा": "thoda",
+    "अभी": "abhi",
+    "मिनट": "minute",
 }
 
 _DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -98,6 +117,13 @@ _YES = {"yes", "yeah", "yea", "yep", "yup", "confirm", "confirmed", "okay", "ok"
         "haan", "han", "haa", "haanji", "theek", "thik"}
 _NO = {"no", "nope", "nah", "cancel", "stop", "none", "neither", "nahin", "nahi", "nai", "na",
        "mat", "ruko", "dont", "don't", "not", "never", "wrong"}
+
+# Any of these means the person has not decided yet.
+_HESITATE = {"wait", "hold", "hang", "later", "minute", "moment", "sec", "baad", "zara", "thoda", "abhi"}
+_QUESTION = {"who", "what", "why", "where", "when", "which", "how", "kaun", "kya", "kyun", "kyon", "kab", "kahan", "kaise"}
+_QUALIFY = {"but", "lekin", "magar", "except", "unless", "par"}
+_UNDECIDED = _HESITATE | _QUESTION | _QUALIFY
+_UNMAPPED = "\u2047"  # placeholder for a Devanagari word we cannot read: always an unknown word
 
 # Words that may surround a confirmation without changing it.
 _FILLER = {
@@ -127,6 +153,9 @@ def words(text: str) -> list[str]:
         mapped = DEVANAGARI.get(token)
         if mapped is not None:
             out.append(mapped)
+            continue
+        if any("\u0900" <= ch <= "\u097f" for ch in token):
+            out.append(_UNMAPPED)  # an unreadable Hindi word is still a word, and an unknown one
             continue
         latin = re.sub(r"[^a-z0-9'\s]", " ", token.lower())
         out.extend(w.strip("'") for w in latin.split() if w.strip("'"))
@@ -178,6 +207,9 @@ def decide(transcript: str, n_options: int, *, stage: Stage = "choose") -> Decis
     known = _YES | _NO | _FILLER | set(_STANDALONE) | set(_NEEDS_NUMBER) | _ORDINALS | {"last", "nambar"}
     if sum(1 for w in ws if w not in known) > 2:
         return unclear
+    asks = re.search(r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard)
+    if (asks or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):
+        return unclear  # "ok, hang on", "okay, who is it", "yes but": still deciding (a plain "no, wait" still cancels)
 
     if has_no:
         if has_yes or options:

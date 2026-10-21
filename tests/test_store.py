@@ -150,3 +150,21 @@ def test_events_get_a_ttl() -> None:
         store.put("event", "e1", {"user_id": "u", "at": 1_800_000_000.0})
         item = ddb.get_item(TableName="t-ttl", Key={"pk": {"S": "event#e1"}})["Item"]
         assert int(item["ttl"]["N"]) == 1_800_000_000 + 30 * 86400
+
+
+def test_sqlite_reads_by_user_use_the_user_column(tmp_path: Any) -> None:
+    store = SqliteStore(tmp_path / "u.db")
+    for i in range(50):
+        store.put("pending", f"p{i}", {"user_id": f"u{i % 5}", "n": i})
+    plan = store._conn.execute("EXPLAIN QUERY PLAN SELECT doc FROM docs WHERE kind = ? AND user = ?", ("pending", "u1")).fetchall()
+    assert any("idx_docs_kind_user" in str(row) for row in plan)
+    assert sorted(r["n"] for r in store.scan("pending", user_id="u1")) == list(range(1, 50, 5))
+
+
+def test_sqlite_purges_rows_long_past_their_time(tmp_path: Any) -> None:
+    store = SqliteStore(tmp_path / "p.db")
+    store.put("signature", "old", {"expires_at": 1000.0})
+    store.put("event", "old-ev", {"at": 1000.0, "user_id": "u"})
+    store.put("signature", "new", {"expires_at": 9e12})
+    removed = store.purge(now=1000.0 + 31 * 86400)
+    assert removed == 2 and store.get("signature", "new") and store.get("signature", "old") is None

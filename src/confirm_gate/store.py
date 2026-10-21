@@ -80,14 +80,45 @@ class SqliteStore:
             "CREATE TABLE IF NOT EXISTS docs (kind TEXT NOT NULL, key TEXT NOT NULL, doc TEXT NOT NULL,"
             " PRIMARY KEY (kind, key))"
         )
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(docs)")}
+        if "user" not in cols:  # older files: add the per-user column and backfill it
+            self._conn.execute("ALTER TABLE docs ADD COLUMN user TEXT")
+            self._conn.execute("ALTER TABLE docs ADD COLUMN until REAL")
+            self._conn.execute("UPDATE docs SET user = json_extract(doc, '$.user_id'), "
+                               "until = COALESCE(json_extract(doc, '$.expires_at'), json_extract(doc, '$.at'))")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_kind_user ON docs (kind, user)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_until ON docs (until)")
+        self._writes = 0
+
+    @staticmethod
+    def _meta(doc: dict[str, Any]) -> tuple[str | None, float | None]:
+        user = doc.get("user_id") if isinstance(doc.get("user_id"), str) else None
+        until = doc.get("expires_at", doc.get("at"))
+        return user, float(until) if isinstance(until, int | float) and not isinstance(until, bool) else None
 
     def put(self, kind: str, key: str, doc: dict[str, Any]) -> None:
+        user, until = self._meta(doc)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO docs (kind, key, doc) VALUES (?, ?, ?)"
-                " ON CONFLICT(kind, key) DO UPDATE SET doc = excluded.doc",
-                (kind, key, json.dumps(doc)),
+                "INSERT INTO docs (kind, key, doc, user, until) VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(kind, key) DO UPDATE SET doc = excluded.doc, user = excluded.user, until = excluded.until",
+                (kind, key, json.dumps(doc), user, until),
             )
+        self._maybe_purge()
+
+    def _maybe_purge(self) -> None:
+        self._writes += 1
+        if self._writes % 500 == 0:
+            self.purge()
+
+    def purge(self, now: float | None = None, *, keep_days: int = 30) -> int:
+        """Delete rows whose expiry (or event time) is more than *keep_days* in the past. Returns how many."""
+        import time as _time
+
+        cutoff = (now if now is not None else _time.time()) - keep_days * 86400
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM docs WHERE until IS NOT NULL AND until < ?", (cutoff,))
+            return cur.rowcount
 
     def get(self, kind: str, key: str) -> dict[str, Any] | None:
         with self._lock:
@@ -95,11 +126,15 @@ class SqliteStore:
         return json.loads(row[0]) if row else None
 
     def put_if_absent(self, kind: str, key: str, doc: dict[str, Any]) -> bool:
+        user, until = self._meta(doc)
         with self._lock:
             cur = self._conn.execute(
-                "INSERT OR IGNORE INTO docs (kind, key, doc) VALUES (?, ?, ?)", (kind, key, json.dumps(doc))
+                "INSERT OR IGNORE INTO docs (kind, key, doc, user, until) VALUES (?, ?, ?, ?, ?)",
+                (kind, key, json.dumps(doc), user, until),
             )
-            return cur.rowcount == 1
+            won = cur.rowcount == 1
+        self._maybe_purge()
+        return won
 
     def set_once(self, kind: str, key: str, field: str, value: Any, updates: dict[str, Any] | None = None) -> bool:
         with self._lock:
@@ -115,7 +150,9 @@ class SqliteStore:
                     return False
                 doc[field] = value
                 doc.update(updates or {})
-                self._conn.execute("UPDATE docs SET doc = ? WHERE kind = ? AND key = ?", (json.dumps(doc), kind, key))
+                user, until = self._meta(doc)
+                self._conn.execute("UPDATE docs SET doc = ?, user = ?, until = ? WHERE kind = ? AND key = ?",
+                                   (json.dumps(doc), user, until, kind, key))
                 self._conn.execute("COMMIT")
                 return True
             except BaseException:
@@ -123,8 +160,13 @@ class SqliteStore:
                 raise
 
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]:
+        user = equals.get("user_id")
         with self._lock:
-            rows = self._conn.execute("SELECT doc FROM docs WHERE kind = ? ORDER BY rowid", (kind,)).fetchall()
+            if isinstance(user, str):
+                rows = self._conn.execute("SELECT doc FROM docs WHERE kind = ? AND user = ? ORDER BY rowid",
+                                          (kind, user)).fetchall()
+            else:
+                rows = self._conn.execute("SELECT doc FROM docs WHERE kind = ? ORDER BY rowid", (kind,)).fetchall()
         docs = [json.loads(r[0]) for r in rows]
         return [d for d in docs if _matches(d, equals)]
 

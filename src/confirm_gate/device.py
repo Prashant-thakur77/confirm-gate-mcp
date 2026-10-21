@@ -51,6 +51,7 @@ def device_routes(
     transcriber: str | None = None,
     media_sink: MediaSink | None = None,
     prefix: str = "/device",
+    max_audio_bytes: int = 2_000_000,
 ) -> list[Route]:
     async def pair(request: Request) -> JSONResponse:
         try:
@@ -81,8 +82,11 @@ def device_routes(
                 out = await anyio.to_thread.run_sync(
                     lambda: gate.submit_tap(device, pid, nonce, option=data.get("option"), answer=data.get("answer")))
             elif kind == "voice":
+                raw = str(data.get("audio_b64", ""))
+                if len(raw) > (max_audio_bytes * 4) // 3 + 4:  # checked before decoding: no memory blow-up
+                    return JSONResponse({"error": f"audio is larger than {max_audio_bytes} bytes"}, status_code=413)
                 try:
-                    audio = base64.b64decode(str(data.get("audio_b64", "")), validate=True)
+                    audio = base64.b64decode(raw, validate=True)
                 except binascii.Error as exc:
                     raise ValueError("audio_b64 is not base64") from exc
                 ref = media_sink(audio, device, pid) if media_sink else None

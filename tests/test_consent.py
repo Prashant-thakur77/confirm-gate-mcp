@@ -116,3 +116,23 @@ def test_normalise_maps_devanagari_and_digits() -> None:
 
 def test_hindi_you_is_never_two() -> None:
     assert decide("तू", 3).kind == "unclear"
+
+
+@pytest.mark.parametrize("said", [
+    "ok hang on", "hold on okay", "sure, in a minute", "okay, later", "ok baad mein", "okay who is it",
+    "yes is it Ravi", "yes wait", "haan ruko zara", "हाँ लेकिन अभी दरवाज़ा खोलने से पहले पूछो कि कौन है",
+    "yes but", "okay what", "haan kaun hai",
+])
+def test_hesitations_and_questions_are_never_a_yes(said: str) -> None:
+    """Security review finding: deferrals and questions were accepted on the final (high-risk) card."""
+    assert decide(said, 1, stage="final").kind != "yes", said
+    assert decide(said, 1).kind != "choose", said
+
+
+@pytest.mark.parametrize("said", ["wait a second", "hold on, number two", "two? wait", "later, the first one"])
+def test_hesitation_blocks_a_choice_too(said: str) -> None:
+    assert decide(said, 3).kind == "unclear", said
+
+
+def test_unmapped_devanagari_counts_as_unknown_words() -> None:
+    assert decide("हाँ लेकिन पहले पूछो", 1, stage="final").kind == "unclear"

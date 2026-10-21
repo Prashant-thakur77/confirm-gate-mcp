@@ -267,6 +267,8 @@ class Gate:
                 raise EvidenceRejected(f"choose a card from 1 to {n}")
             decision = {"kind": "choose", "option": option, "heard": f"tap: {option}"}
         evidence_id = "ev_" + secrets.token_hex(12)
+        # Unique per tap on purpose: a double tap must not error. A replayed tap request is stopped by the
+        # single-use device signature, and a second confirm by the single-use nonce.
         payload = f"tap|{device.device_id}|{doc['pending_id']}|{decision['kind']}|{decision['option']}|{evidence_id}"
         fp = hashlib.sha256(payload.encode()).hexdigest()
         if not self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id}):
@@ -301,8 +303,10 @@ class Gate:
         doc = self._open_for(device, pending_id, nonce)
         text = str(transcript or "").strip()[:200]
         evidence_id = "ev_" + secrets.token_hex(12)
-        fp = hashlib.sha256(f"transcript|{device.device_id}|{doc['pending_id']}|{text}|{evidence_id}".encode()).hexdigest()
-        self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id})
+        # The same words from the same device for the same card set are one answer, not two.
+        fp = hashlib.sha256(f"transcript|{device.device_id}|{doc['pending_id']}|{text}".encode()).hexdigest()
+        if not self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id}):
+            raise EvidenceRejected("this answer has already been given for these cards")
         d = decide(text, len(doc["options"]), stage=doc["stage"]).as_dict()
         return self._record(device, doc, "transcript", d, fp, evidence_id, transcript=text, transcriber=source[:40])
 
