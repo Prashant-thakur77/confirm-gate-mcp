@@ -107,3 +107,46 @@ def test_real_dynamodb_set_once_under_contention() -> None:
             t.join()
         store._c.delete_item(TableName=store.table, Key={"pk": {"S": f"racetest#{key}"}})
         assert wins.count(True) == 1
+
+
+def test_dynamo_scans_by_user_read_only_that_users_rows() -> None:
+    with mock_aws():
+        ddb = boto3.client("dynamodb", region_name="us-east-1")
+        DynamoStore.create_table("t-user", client=ddb)
+        store = DynamoStore("t-user", client=ddb)
+        for i in range(30):
+            store.put("pending", f"p{i}", {"user_id": f"u{i % 3}", "n": i})
+        calls: list[dict[str, Any]] = []
+        real = ddb.query
+
+        def spy(**kw: Any) -> Any:
+            calls.append(kw)
+            return real(**kw)
+
+        ddb.query = spy  # type: ignore[method-assign]
+        rows = store.scan("pending", user_id="u1")
+        assert sorted(r["n"] for r in rows) == list(range(1, 30, 3))
+        assert calls[-1]["IndexName"] == "user-kind-index"
+        assert sum(len(c) for c in [rows]) == 10
+
+
+def test_dynamo_works_on_a_table_without_indexes() -> None:
+    with mock_aws():
+        ddb = boto3.client("dynamodb", region_name="us-east-1")
+        ddb.create_table(TableName="old", KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+                         AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}], BillingMode="PAY_PER_REQUEST")
+        store = DynamoStore("old", client=ddb)
+        store.put("receipt", "r1", {"user_id": "a"})
+        store.put("receipt", "r2", {"user_id": "b"})
+        assert store.scan("receipt", user_id="a") == [{"user_id": "a"}]
+        assert len(store.scan("receipt")) == 2
+
+
+def test_events_get_a_ttl() -> None:
+    with mock_aws():
+        ddb = boto3.client("dynamodb", region_name="us-east-1")
+        DynamoStore.create_table("t-ttl", client=ddb)
+        store = DynamoStore("t-ttl", client=ddb)
+        store.put("event", "e1", {"user_id": "u", "at": 1_800_000_000.0})
+        item = ddb.get_item(TableName="t-ttl", Key={"pk": {"S": "event#e1"}})["Item"]
+        assert int(item["ttl"]["N"]) == 1_800_000_000 + 30 * 86400

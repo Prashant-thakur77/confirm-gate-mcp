@@ -130,6 +130,7 @@ class SqliteStore:
 
 
 KIND_INDEX = "kind-index"
+USER_INDEX = "user-kind-index"  # one user's rows of one kind, without reading anyone else's
 
 
 class DynamoStore:
@@ -147,6 +148,7 @@ class DynamoStore:
         self.table = table_name
         self._c = client
         self._has_index: bool | None = None
+        self._has_user_index: bool | None = None
 
     @staticmethod
     def create_table(table_name: str, *, client: Any) -> None:
@@ -154,9 +156,15 @@ class DynamoStore:
             TableName=table_name,
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"},
-                                  {"AttributeName": "kind", "AttributeType": "S"}],
-            GlobalSecondaryIndexes=[{"IndexName": KIND_INDEX, "KeySchema": [{"AttributeName": "kind", "KeyType": "HASH"}],
-                                     "Projection": {"ProjectionType": "ALL"}}],
+                                  {"AttributeName": "kind", "AttributeType": "S"},
+                                  {"AttributeName": "f_user_id", "AttributeType": "S"}],
+            GlobalSecondaryIndexes=[
+                {"IndexName": KIND_INDEX, "KeySchema": [{"AttributeName": "kind", "KeyType": "HASH"}],
+                 "Projection": {"ProjectionType": "ALL"}},
+                {"IndexName": USER_INDEX, "KeySchema": [{"AttributeName": "f_user_id", "KeyType": "HASH"},
+                                                        {"AttributeName": "kind", "KeyType": "RANGE"}],
+                 "Projection": {"ProjectionType": "ALL"}},
+            ],
             BillingMode="PAY_PER_REQUEST",
         )
         client.get_waiter("table_exists").wait(TableName=table_name)
@@ -173,8 +181,9 @@ class DynamoStore:
             if v is not None:
                 # A set field keeps its one-time marker even if the whole doc is rewritten.
                 item[f"once_{k}"] = {"BOOL": True}
-        if isinstance(doc.get("expires_at"), int | float):
-            item["ttl"] = {"N": str(int(doc["expires_at"]) + 30 * 86400)}
+        stamp = doc.get("expires_at") if isinstance(doc.get("expires_at"), int | float) else doc.get("at")
+        if isinstance(stamp, int | float) and not isinstance(stamp, bool):
+            item["ttl"] = {"N": str(int(stamp) + 30 * 86400)}  # rows age out 30 days after they expire or happen
         return item
 
     def put(self, kind: str, key: str, doc: dict[str, Any]) -> None:
@@ -240,6 +249,26 @@ class DynamoStore:
                 filters.append(f"#f{i} = :f{i}")
         base: dict[str, Any] = {"TableName": self.table, "ExpressionAttributeNames": names,
                                 "ExpressionAttributeValues": values}
+        user = equals.get("user_id")
+        if isinstance(user, str) and user and self._has_user_index is not False:
+            others = [f for f in filters if names.get(f.split(" = ")[0]) != "f_user_id"]
+            used = {"#k", "#u", *(f.split(" = ")[0] for f in others)}
+            used_values = {":k", ":u", *(f.split(" = ")[1] for f in others)}
+            q = {"TableName": self.table, "IndexName": USER_INDEX,
+                 "KeyConditionExpression": "#u = :u AND #k = :k",
+                 "ExpressionAttributeNames": {k: v for k, v in {**names, "#u": "f_user_id"}.items() if k in used},
+                 "ExpressionAttributeValues": {k: v for k, v in {**values, ":u": {"S": user}}.items()
+                                               if k in used_values}}
+            if others:
+                q["FilterExpression"] = " AND ".join(others)
+            try:
+                return [d for d in self._pages(self._c.query, q) if _matches(d, equals)]
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "index" not in msg:
+                    raise
+                if "backfilling" not in msg:
+                    self._has_user_index = False
         if self._has_index is not False:
             try:
                 return [d for d in self._pages(self._c.query, {**base, "IndexName": KIND_INDEX,
