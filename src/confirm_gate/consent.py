@@ -62,6 +62,9 @@ DEVANAGARI = {
     "वाला": "wala",
     "वाली": "wali",
     "यस": "yes",
+    "येस": "yes",       # Transcribe hi-IN writes an English "yes" this way
+    "त्वो": "two",       # ...and an English "two" this way. ("तू" is "you", never two.)
+    "ओने": "one",
     "नो": "no",
     "वन": "one",
     "टू": "two",

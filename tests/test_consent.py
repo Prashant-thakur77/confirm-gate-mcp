@@ -40,6 +40,7 @@ from confirm_gate.consent import decide, normalise
         ("टू", 2),
         ("नंबर थ्री", 3),
         ("२", 2),
+        ("नंबर त्वो", 2),
     ],
 )
 def test_a_clear_choice_picks_that_option(said: str, option: int) -> None:
@@ -85,7 +86,7 @@ def test_no_cancels(said: str) -> None:
     assert d.kind == "no", (said, d)
 
 
-@pytest.mark.parametrize("said", ["yes", "yeah", "yep", "yes please", "confirm", "okay", "haan", "haan ji", "theek hai", "हाँ", "हां"])
+@pytest.mark.parametrize("said", ["yes", "yeah", "yep", "yes please", "confirm", "okay", "haan", "haan ji", "theek hai", "हाँ", "हां", "येस।"])
 def test_yes_confirms_the_final_card(said: str) -> None:
     assert decide(said, 1, stage="final").kind == "yes", said
 
@@ -111,3 +112,7 @@ def test_too_many_other_words_means_it_was_not_a_confirmation() -> None:
 def test_normalise_maps_devanagari_and_digits() -> None:
     assert normalise("नंबर टू।") == "number 2"
     assert normalise("Option Three!") == "option 3"
+
+
+def test_hindi_you_is_never_two() -> None:
+    assert decide("तू", 3).kind == "unclear"
