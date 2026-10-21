@@ -174,3 +174,22 @@ async def test_a_write_runs_for_the_user_who_confirmed_never_one_the_agent_names
         out = _text(await c.call_tool("confirm", {"pending_id": p["pending_id"], "evidence_ref": ev["evidence_ref"]}))
     assert out["status"] == "done"
     assert ran_for == ["alice"]
+
+
+async def test_pending_status_shows_only_the_callers_own_sets() -> None:
+    """Second review, finding 12: pending_status answered for any user's card set."""
+    current = {"user": "alice"}
+    mcp = MCPServer("t")
+    gs = GatedServer(mcp, store=MemoryStore(), clock=Clock(), user=lambda: current["user"])
+
+    @gs.write()
+    def home_set(device: str, state: str) -> dict[str, Any]:
+        """Set."""
+        return {"ok": True}
+
+    async with Client(mcp) as c:
+        p = _text(await c.call_tool("home_set", {"device": "fan", "state": "on"}))
+        assert _text(await c.call_tool("pending_status", {"pending_id": p["pending_id"]}))["state"] != "unknown"
+        current["user"] = "mallory"
+        seen = _text(await c.call_tool("pending_status", {"pending_id": p["pending_id"]}))
+    assert seen == {"pending_id": p["pending_id"], "state": "unknown"}

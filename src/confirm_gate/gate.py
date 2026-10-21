@@ -165,9 +165,10 @@ class Gate:
             "expires_in_s": max(0, round(doc["expires_at"] - self.clock())),
         }
 
-    def pending_status(self, pending_id: str) -> dict[str, Any]:
+    def pending_status(self, pending_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        """A card set's public state. With *user_id*, another user's set is reported as unknown."""
         doc = self.store.get("pending", str(pending_id or ""))
-        if doc is None:
+        if doc is None or (user_id is not None and doc.get("user_id") != user_id):
             return {"pending_id": pending_id, "state": "unknown"}
         return self.public_view(doc)
 

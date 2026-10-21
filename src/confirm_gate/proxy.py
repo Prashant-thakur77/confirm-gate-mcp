@@ -143,7 +143,7 @@ class GatedServer:
 
         def pending_status(pending_id: str) -> dict[str, Any]:
             """Whether a pending card is still waiting, confirmed, cancelled or expired. Never runs anything."""
-            return gate.pending_status(pending_id)
+            return gate.pending_status(pending_id, user_id=self.user())
 
         self.mcp.add_tool(confirm, name="confirm", description=CONFIRM_DESCRIPTION,
                           annotations=ToolAnnotations(read_only_hint=False))
