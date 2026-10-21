@@ -59,7 +59,8 @@ def _pad(key: str) -> str:
 
 class DeviceRegistry:
     pairing_ttl = 600
-    max_attempts = 5  # pairing attempts per window, across all callers
+    max_attempts = 5  # wrong pairing codes per window from one source (the caller's address)
+    global_max_attempts = 30  # wrong codes per window from everyone together: bounds guessing from many addresses
     attempt_window = 600
     skew = 60
 
@@ -86,22 +87,28 @@ class DeviceRegistry:
         w = int(self.clock() // self.attempt_window)
         return f"w{w}", float((w + 1) * self.attempt_window)
 
-    def pair(self, code: str, *, name: str = "") -> Device:
+    def pair(self, code: str, *, name: str = "", source: str = "") -> Device:
         """Exchange a pairing code for a device key.
 
-        Every attempt takes one unit of a shared, time-windowed budget *before* the code is looked up (an atomic
-        counter, so a burst of parallel guesses cannot outrun it); a right code gives its unit back. Nothing resets
-        the budget except the window passing, so starting a new pairing never hands a guesser fresh tries.
+        Every attempt takes one unit of two time-windowed budgets *before* the code is looked up: one for its
+        *source* (the caller's address) and one shared by everyone (atomic counters, so a burst of parallel guesses
+        cannot outrun them). A right code gives both units back. Nothing resets a budget except its window passing,
+        so starting a new pairing never hands a guesser fresh tries, and one guesser cannot lock out the owner.
         """
         window, ends = self._window()
-        if self.store.add("pairing_attempts", window, 1, expires_at=ends) > self.max_attempts:
-            raise PairingError("too many wrong codes; try again in a few minutes")
+        keys = [(f"{window}:src:{source}", self.max_attempts), (window, self.global_max_attempts)]
+        taken = []
+        for key, limit in keys:
+            taken.append(key)
+            if self.store.add("pairing_attempts", key, 1, expires_at=ends) > limit:
+                raise PairingError("too many wrong codes; try again in a few minutes")
         doc = self.store.get("pairing", str(code))
         if doc is None or doc.get("used_at") is not None or doc["expires_at"] < self.clock():
             raise PairingError("that code is wrong or has expired")
         if not self.store.set_once("pairing", str(code), "used_at", self.clock()):
             raise PairingError("that code has already been used")
-        self.store.add("pairing_attempts", window, -1, expires_at=ends)
+        for key in taken:
+            self.store.add("pairing_attempts", key, -1, expires_at=ends)
         return self.issue(doc["user_id"], name=name, transcriber=str(doc.get("transcriber") or ""))
 
     def issue(self, user_id: str, *, name: str = "", transcriber: str = "") -> Device:
@@ -118,12 +125,17 @@ class DeviceRegistry:
         return device
 
     def set_transcriber(self, device_id: str, transcriber: str) -> bool:
-        """Operator action: mark an already paired device as one that recognises speech itself."""
+        """Operator action: mark an already paired device as one that recognises speech itself.
+
+        A one-time, conditional write (never a rewrite of the device), so it cannot undo a revocation that lands at
+        the same moment. Idempotent for the same recogniser; a different one needs a fresh pairing.
+        """
         doc = self.store.get("device", device_id)
         if doc is None or doc.get("revoked_at") is not None:
             return False
-        self.store.put("device", device_id, {**doc, "transcriber": transcriber[:40]})
-        return True
+        if doc.get("transcriber"):
+            return doc["transcriber"] == transcriber[:40]
+        return self.store.set_once("device", device_id, "transcriber_at", self.clock(), {"transcriber": transcriber[:40]})
 
     def revoke(self, device_id: str) -> bool:
         return self.store.set_once("device", device_id, "revoked_at", self.clock())

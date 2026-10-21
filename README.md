@@ -84,7 +84,7 @@ The device channel adds its own protections:
 
 - Every request is HMAC-signed with the device key.
 - Each signature is accepted once, inside a ±60 s window.
-- Pairing codes are one-time and valid for 10 minutes. Pairing attempts share an atomic budget of 5 wrong tries per 10 minutes, taken before the code is checked, so parallel guesses and freshly started pairings can't reset or outrun it.
+- Pairing codes are one-time and valid for 10 minutes. Each attempt takes from two atomic budgets before the code is checked: 5 wrong tries per 10 minutes per source address, and 30 for everyone together. Parallel guesses and freshly started pairings can't reset or outrun them, and one guesser can't lock out the owner.
 - Only a device paired as a voice device (`start_pairing(user, transcriber="alexa")`) may send its own transcripts, and the receipt names that recogniser.
 - A voice recording's fingerprint can't be used twice.
 - High-risk actions need a second, separately nonced yes.

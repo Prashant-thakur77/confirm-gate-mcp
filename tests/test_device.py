@@ -201,3 +201,23 @@ def test_routes_refuse_a_wrong_nonce(client: TestClient, gate: Gate, device: Any
     r = _signed(client, device, clock, "POST", "/device/evidence",
                 {"pending_id": ps.pending_id, "nonce": "nope", "kind": "tap", "option": 1})
     assert r.status_code == 409
+
+
+def test_one_sources_wrong_guesses_do_not_lock_out_the_owner(devices: DeviceRegistry) -> None:
+    """Third review, finding 3: five guesses from anyone locked every pairing (and every Alexa+ link)."""
+    code = devices.start_pairing("owner")
+    for _ in range(devices.max_attempts):
+        with pytest.raises(PairingError):
+            devices.pair(_wrong(code), name="guess", source="203.0.113.9")
+    with pytest.raises(PairingError, match="too many"):
+        devices.pair(code, name="attacker's right guess", source="203.0.113.9")
+    assert devices.pair(code, name="owner", source="198.51.100.7").user_id == "owner"
+
+
+def test_the_global_ceiling_still_bounds_guessing_from_many_sources(devices: DeviceRegistry) -> None:
+    code = devices.start_pairing("owner")
+    for i in range(devices.global_max_attempts):
+        with pytest.raises(PairingError):
+            devices.pair(_wrong(code), name="guess", source=f"10.0.0.{i}")
+    with pytest.raises(PairingError, match="too many"):
+        devices.pair(code, name="fresh source", source="10.9.9.9")

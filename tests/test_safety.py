@@ -382,3 +382,16 @@ def test_withdrawing_open_sets_runs_nothing_and_blocks_later_evidence(gate: Gate
     assert gate.device_pending(device) == []
     assert gate.confirm(ps.pending_id, ev["evidence_ref"])["status"] == "refused"
     assert house.calls == 0
+
+
+def test_marking_a_voice_device_never_unrevokes_it(devices: Any, device: Any) -> None:
+    """Third review, finding 8: set_transcriber rewrote the device doc and could drop a revocation."""
+    assert devices.revoke(device.device_id)
+    assert not devices.set_transcriber(device.device_id, "alexa")
+    assert devices.get(device.device_id) is None
+
+
+def test_marking_a_voice_device_is_idempotent(devices: Any, device: Any) -> None:
+    assert devices.set_transcriber(device.device_id, "alexa")
+    assert devices.set_transcriber(device.device_id, "alexa")  # every deploy runs it again
+    assert not devices.set_transcriber(device.device_id, "another")  # a different recogniser needs a re-pair

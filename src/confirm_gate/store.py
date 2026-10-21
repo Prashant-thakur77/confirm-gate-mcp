@@ -276,26 +276,35 @@ class DynamoStore:
     def set_once(self, kind: str, key: str, field: str, value: Any, updates: dict[str, Any] | None = None) -> bool:
         from botocore.exceptions import ClientError
 
-        doc = self.get(kind, key)
-        if doc is None or doc.get(field) is not None:
-            return False
-        doc[field] = value
-        doc.update(updates or {})
         marker = f"once_{field}"
-        try:
-            self._c.update_item(
-                TableName=self.table,
-                Key={"pk": self._pk(kind, key)},
-                UpdateExpression="SET #doc = :doc, #m = :true",
-                ConditionExpression="attribute_exists(pk) AND attribute_not_exists(#m)",
-                ExpressionAttributeNames={"#doc": "doc", "#m": marker},
-                ExpressionAttributeValues={":doc": {"S": json.dumps(doc)}, ":true": {"BOOL": True}},
-            )
-            return True
-        except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+        for _ in range(8):  # optimistic: the doc must be exactly what we read, or we read again
+            item = self._c.get_item(TableName=self.table, Key={"pk": self._pk(kind, key)},
+                                    ConsistentRead=True).get("Item")
+            if not item or "doc" not in item:
                 return False
-            raise
+            old = item["doc"]["S"]
+            doc = json.loads(old)
+            if doc.get(field) is not None or marker in item:
+                return False
+            doc[field] = value
+            doc.update(updates or {})
+            try:
+                self._c.update_item(
+                    TableName=self.table,
+                    Key={"pk": self._pk(kind, key)},
+                    UpdateExpression="SET #doc = :doc, #m = :true",
+                    # The marker makes the field one-time; "#doc = :old" makes sure a write to another field of
+                    # this doc between our read and this write is never lost.
+                    ConditionExpression="attribute_exists(pk) AND attribute_not_exists(#m) AND #doc = :old",
+                    ExpressionAttributeNames={"#doc": "doc", "#m": marker},
+                    ExpressionAttributeValues={":doc": {"S": json.dumps(doc)}, ":true": {"BOOL": True},
+                                               ":old": {"S": old}},
+                )
+                return True
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                    raise
+        return False
 
     def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
         """Atomically add *amount* to a counter with DynamoDB ``ADD`` and return the new value.

@@ -185,3 +185,36 @@ def test_on_the_final_card_the_cards_own_words_are_not_unknown() -> None:
     assert decide("yes, unlock it", 1, stage="final").kind == "unclear"
     assert decide("yes, unlock it later", 1, stage="final", echo=card).kind == "unclear"
     assert decide("yes, unlock the back door", 1, stage="final", echo=card).kind == "unclear"
+
+
+@pytest.mark.parametrize("said, card", [
+    ("हाँ रहने दो", "Message Mom: “मैं घर आ रहा हूँ”"),
+    ("yes, nevermind", "Message Mom: “scratch that, kidding, nevermind”"),
+    ("yes scratch that", "Message Mom: “scratch that, kidding, nevermind”"),
+])
+def test_quoted_text_and_unreadable_words_on_a_card_are_never_allowed_back(said: str, card: str) -> None:
+    """Third review, finding 1: the echo let a message's own words (or any unreadable Hindi word) pass a final yes."""
+    assert decide(said, 1, stage="final", echo=card).kind == "unclear", said
+
+
+def test_the_cards_fixed_words_are_still_allowed_back() -> None:
+    assert decide("yes, message mom", 1, stage="final", echo="Message Mom: “I'll be late”").kind == "yes"
+
+
+@pytest.mark.parametrize("said, stage", [
+    ("okay, do it? is it the front door?", "final"), ("yes do it, is it the front door", "final"),
+    ("two, do it, is it safe", "choose"),
+])
+def test_do_it_does_not_hide_a_later_question(said: str, stage: str) -> None:
+    """Third review, finding 2: only the first question-shaped match was checked."""
+    n = 1 if stage == "final" else 3
+    assert decide(said, n, stage=stage).kind == "unclear", said  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("said", [
+    "two, nevermind", "number two, rehne do", "नंबर दो, रहने दो", "two, chhodo", "two, scratch that", "two I suppose",
+    "two, dunno", "two, sorry", "two second", "bas do second", "10 second", "another second", "two more seconds",
+])
+def test_hedges_and_time_phrases_never_pick_a_card(said: str) -> None:
+    """Third review, finding 6."""
+    assert decide(said, 3).kind == "unclear", said

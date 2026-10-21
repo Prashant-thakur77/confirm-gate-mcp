@@ -116,6 +116,11 @@ DEVANAGARI = {
     "ज़रूर": "zaroor",
     "जरूर": "zaroor",
     "सही": "sahi",
+    "रहने": "rehne",
+    "छोड़ो": "chhodo",
+    "छोड़िए": "chhodo",
+    "सॉरी": "sorry",
+    "बस": "bas",
 }
 
 _DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -146,8 +151,11 @@ _HESITATE = {"wait", "hold", "hang", "later", "minute", "minutes", "moment", "se
              "tomorrow", "tonight", "baad", "zara", "thoda", "abhi", "kal", "ruk", "rukiye", "thehro", "thehriye",
              "thehra", "sochne", "socho", "sochta", "sochti", "sochenge", "dekhte", "dekhenge"}
 _HEDGE = {"maybe", "perhaps", "probably", "possibly", "unsure", "actually", "think", "guess", "might", "kinda",
-          "shayad", "shaayad"}
-_TIME_BEFORE_SECOND = {"a", "ek", "one", "1", "just", "half", "in", "few", "couple"}
+          "shayad", "shaayad", "nevermind", "never", "scratch", "suppose", "dunno", "sorry", "rehne", "rehene",
+          "chhodo", "chodo", "chhod", "kidding", "oops"}
+# "second" after these is time ("ek second", "two more seconds"), never option 2.
+_TIME_BEFORE_SECOND = {"a", "ek", "one", "two", "do", "just", "half", "in", "few", "couple", "another", "more", "bas",
+                       "some", "teen", "three"}
 _QUESTION = {"who", "what", "why", "where", "when", "which", "how", "kaun", "kya", "kyun", "kyon", "kab", "kahan", "kaise"}
 _QUALIFY = {"but", "lekin", "magar", "except", "unless", "par"}
 _UNDECIDED = _HESITATE | _HEDGE | _QUESTION | _QUALIFY
@@ -215,6 +223,13 @@ def _option_mentions(ws: list[str], n_options: int) -> list[int]:
     return found
 
 
+def _card_words(card_text: str) -> set[str]:
+    """The fixed words of a card ("Message Mom"), never its quoted free text (a message the agent wrote) and never
+    the placeholder for a word we cannot read."""
+    fixed = re.sub(r"[“\"«][^”\"»]*[”\"»]?", " ", card_text or "")
+    return set(words(fixed)) - {_UNMAPPED}
+
+
 def decide(transcript: str, n_options: int, *, stage: Stage = "choose", echo: str = "") -> Decision:
     """Decide what *transcript* says about a card set of *n_options*.
 
@@ -235,14 +250,15 @@ def decide(transcript: str, n_options: int, *, stage: Stage = "choose", echo: st
     options = _option_mentions(ws, n_options)
 
     known = _YES | _NO | _FILLER | set(_STANDALONE) | set(_NEEDS_NUMBER) | _ORDINALS | {"last", "nambar"}
-    said_back = set(words(echo)) if stage == "final" else set()
+    said_back = _card_words(echo) if stage == "final" else set()
     unknown = [w for w in ws if w not in known and w not in said_back]
     if len(unknown) > 2 or (stage == "final" and unknown):
         return unclear  # on the high-risk card even one word we can't read could be a hedge
-    asks = re.search(r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard)
-    if asks and asks.group(0) == "do it":
-        asks = None  # "okay, do it" is an instruction, not a question
-    time_ask = any(w in ("second", "sec") and i > 0 and ws[i - 1] in _TIME_BEFORE_SECOND for i, w in enumerate(ws))
+    # "is it", "can you"... asks a question; "okay, do it" is an instruction. Every match counts, not just the first.
+    asks = any(m.group(0) != "do it" for m in re.finditer(
+        r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard))
+    time_ask = any(w in ("second", "sec", "seconds", "secs") and i > 0
+                   and (ws[i - 1] in _TIME_BEFORE_SECOND or ws[i - 1].isdigit()) for i, w in enumerate(ws))
     if (asks or time_ask or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):
         return unclear  # "ok, hang on", "okay, who is it", "yes but": still deciding (a plain "no, wait" still cancels)
 

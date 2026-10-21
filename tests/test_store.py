@@ -219,3 +219,40 @@ def test_sqlite_purges_rows_long_past_their_time(tmp_path: Any) -> None:
     store.put("signature", "new", {"expires_at": 9e12})
     removed = store.purge(now=1000.0 + 31 * 86400)
     assert removed == 2 and store.get("signature", "new") and store.get("signature", "old") is None
+
+
+def test_set_once_never_loses_a_concurrent_set_once_on_another_field(any_store: Any) -> None:
+    """Third review, finding 8: DynamoStore wrote back the whole doc it had read, dropping a field set in between."""
+    any_store.put("device", "d1", {"revoked_at": None, "transcriber_at": None, "transcriber": ""})
+    real_get = any_store.get
+    injected = {"done": False}
+
+    def racing_get(kind: str, key: str) -> Any:
+        doc = real_get(kind, key)
+        if kind == "device" and not injected["done"]:
+            injected["done"] = True
+            assert any_store.set_once("device", "d1", "revoked_at", 5.0)  # the user unpairs meanwhile
+        return doc
+
+    any_store.get = racing_get
+    client = getattr(any_store, "_c", None)
+    if client is not None:  # DynamoStore reads through its client
+        real_get_item = client.get_item
+
+        def racing_get_item(**kw: Any) -> Any:
+            out = real_get_item(**kw)
+            if not injected["done"]:
+                injected["done"] = True
+                any_store.get = real_get
+                assert any_store.set_once("device", "d1", "revoked_at", 5.0)
+            return out
+
+        client.get_item = racing_get_item
+    assert any_store.set_once("device", "d1", "transcriber_at", 6.0, {"transcriber": "alexa"})
+    any_store.get = real_get
+    if client is not None:
+        client.get_item = real_get_item
+    if not injected["done"]:  # memory and SQLite never read through get(): the race cannot happen there
+        assert any_store.set_once("device", "d1", "revoked_at", 5.0)
+    doc = any_store.get("device", "d1")
+    assert doc["revoked_at"] == 5.0 and doc["transcriber"] == "alexa"

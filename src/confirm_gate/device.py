@@ -52,11 +52,16 @@ def device_routes(
     media_sink: MediaSink | None = None,
     prefix: str = "/device",
     max_audio_bytes: int = 2_000_000,
+    client_ip: Callable[[Request], str] | None = None,
 ) -> list[Route]:
+    """*client_ip* names the caller for the per-source pairing budget. Behind a proxy, pass a function that reads the
+    address the proxy saw (the default is the socket's peer, which behind a proxy is the proxy itself)."""
+
     async def pair(request: Request) -> JSONResponse:
+        source = client_ip(request) if client_ip else (request.client.host if request.client else "")
         try:
             data = _json(await request.body())
-            device = devices.pair(str(data.get("code", "")), name=str(data.get("name", ""))[:60])
+            device = devices.pair(str(data.get("code", "")), name=str(data.get("name", ""))[:60], source=source)
         except (PairingError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
         return JSONResponse({"device_id": device.device_id, "user_id": device.user_id,

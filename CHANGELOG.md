@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 (2026-10-21)
+
+Third adversarial review, of 0.3.0 itself.
+
+- **Pairing budgets per source.** `pair(code, source=...)` takes one unit of a per-source budget (`max_attempts`, 5) and one of a global ceiling (`global_max_attempts`, 30) per window, so one guesser can no longer lock out the owner, and guessing from many addresses is still bounded. `device_routes(client_ip=...)` names the caller behind a proxy.
+- **`DynamoStore.set_once` never loses a concurrent write** to another field of the same document (an optimistic `doc = :old` condition, re-read on conflict). Before, a revocation landing between the read and the write could be dropped.
+- **`set_transcriber` is a one-time conditional write**, so it can never undo a revocation; idempotent for the same recogniser.
+- **Consent:** on the final card only the card's fixed words may be said back, never its quoted free text (a message the agent wrote) or an unreadable word. Every question-shaped phrase counts, not just the first ("yes do it, is it the front door" is unclear). More hedges ("never mind", "scratch that", "rehne do", "chhodo", "sorry", "I suppose") and time phrases ("two seconds", "bas do second", "another second").
+
 ## 0.3.0 (2026-10-21)
 
 Second adversarial review. The core guarantee still held; these close the gaps around it.
