@@ -14,7 +14,7 @@ agent ──MCP (bearer token)──▶  confirm-gate  ──▶ upstream MCP se
 ## 60 seconds
 
 ```bash
-pip install "git+https://github.com/Prashant-thakur77/SureSay#subdirectory=packages/confirm-gate-mcp"
+pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp"
 confirm-gate serve --upstream-cmd "uvx mcp-server-time"       # or --upstream http://host:port/mcp
 ```
 
