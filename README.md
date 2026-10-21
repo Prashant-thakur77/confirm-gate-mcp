@@ -84,7 +84,8 @@ The device channel adds its own protections:
 
 - Every request is HMAC-signed with the device key.
 - Each signature is accepted once, inside a ±60 s window.
-- Pairing codes are one-time, valid for 10 minutes, and lock after 5 wrong tries.
+- Pairing codes are one-time and valid for 10 minutes. Pairing attempts share an atomic budget of 5 wrong tries per 10 minutes, taken before the code is checked, so parallel guesses and freshly started pairings can't reset or outrun it.
+- Only a device paired as a voice device (`start_pairing(user, transcriber="alexa")`) may send its own transcripts, and the receipt names that recogniser.
 - A voice recording's fingerprint can't be used twice.
 - High-risk actions need a second, separately nonced yes.
 
@@ -95,7 +96,7 @@ Voice evidence is audio. The server transcribes it with your recogniser, so the 
 - **Picks a card:** "two", "the second one", "number 2", "option three". In Hinglish: "doosra", "do number", "teen number", "दो नंबर".
 - **Confirms the final card:** "yes", "haan", "theek hai".
 - **Cancels:** "no", "cancel", "nahin", "mat karo".
-- **Refused:** everything else, including a bare "do", "not two", "yes no", or a sound-alike such as "to".
+- **Refused:** everything else, including a bare "do", "not two", "yes no", or a sound-alike such as "to"; hesitations and hedges ("hang on", "ek second", "maybe", "shayad", "sochne do"); and, on the high-risk final card, any word it can't read other than the card's own words.
 
 ## Stores
 
@@ -103,7 +104,7 @@ Voice evidence is audio. The server transcribes it with your recogniser, so the 
 - `SqliteStore`: one file, safe across threads and processes.
 - `DynamoStore`: one on-demand table, conditional writes for one-time use.
 
-All three give the same `put_if_absent` / `set_once` guarantees, and the same 216 tests run against each.
+All three give the same `put_if_absent` / `set_once` / `add` (atomic counter) guarantees, and the same tests run against each.
 
 ## Receipts
 

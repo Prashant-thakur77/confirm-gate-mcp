@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (2026-10-21)
+
+Second adversarial review. The core guarantee still held; these close the gaps around it.
+
+- **Pairing lockout cannot be reset.** Every attempt takes one unit of a shared, time-windowed budget (an atomic counter) *before* the code is looked up, so parallel guesses cannot outrun it, and a right code gives its unit back. `start_pairing` no longer resets anything. New `DeviceRegistry.attempt_window`.
+- **`DeviceRegistry.issue(user_id)`** creates a device directly, for callers that already know the user (an operator terminal, a fresh sandbox user), with no pairing code.
+- **Store gains `add(kind, key, amount, expires_at=)`**: an atomic counter (DynamoDB `ADD`, a SQLite upsert, a lock in memory). *Breaking for custom `Store` implementations.*
+- **Transcript evidence only from voice devices.** A device must be paired with `start_pairing(user, transcriber="…")` (or marked with `set_transcriber`) to send its own transcripts, and the receipt names that recogniser, never one the request chose. `submit_transcript` no longer takes `source`. *Breaking.*
+- **Consent parser:** "a second" / "ek second" / "just a second" are time, not option 2. Hedges (maybe, probably, actually, I think, shayad, sochne do, ruk, thehro, kal, and their Devanagari forms) are undecided. On the final (high-risk) card no unknown word is allowed, except the card's own words ("yes, unlock the front door").
+- **`pending_status`** answers only for the caller's own card sets.
+
 ## 0.2.0 (2026-10-21)
 
 Security hardening after an independent adversarial review. The core guarantee held: no write executed without the user's own evidence.
