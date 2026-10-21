@@ -38,6 +38,7 @@ class Device:
     user_id: str
     key: str
     name: str = ""
+    transcriber: str = ""  # set only for a device that recognises speech itself (paired as such by the operator)
 
     def public(self) -> dict[str, Any]:
         return {"device_id": self.device_id, "user_id": self.user_id, "name": self.name}
@@ -67,11 +68,16 @@ class DeviceRegistry:
         self.clock = clock
 
     # pairing -----------------------------------------------------------------
-    def start_pairing(self, user_id: str) -> str:
-        """A fresh 6-digit code for *user_id*; show it to the user, never to the agent."""
+    def start_pairing(self, user_id: str, *, transcriber: str = "") -> str:
+        """A fresh 6-digit code for *user_id*; show it to the user, never to the agent.
+
+        *transcriber* names the speech recogniser of a device that sends its own transcripts (a smart-speaker
+        skill). Only a device paired with one may submit transcript evidence, and receipts name that recogniser.
+        """
         for _ in range(20):
             code = f"{secrets.randbelow(10**6):06d}"
-            doc = {"user_id": user_id, "expires_at": self.clock() + self.pairing_ttl, "used_at": None}
+            doc = {"user_id": user_id, "expires_at": self.clock() + self.pairing_ttl, "used_at": None,
+                   "transcriber": transcriber[:40]}
             if self.store.put_if_absent("pairing", code, doc):
                 return code
         raise PairingError("could not allocate a pairing code")
@@ -96,9 +102,9 @@ class DeviceRegistry:
         if not self.store.set_once("pairing", str(code), "used_at", self.clock()):
             raise PairingError("that code has already been used")
         self.store.add("pairing_attempts", window, -1, expires_at=ends)
-        return self.issue(doc["user_id"], name=name)
+        return self.issue(doc["user_id"], name=name, transcriber=str(doc.get("transcriber") or ""))
 
-    def issue(self, user_id: str, *, name: str = "") -> Device:
+    def issue(self, user_id: str, *, name: str = "", transcriber: str = "") -> Device:
         """Create a device for *user_id* directly. Only for callers that already know who the user is
         (an operator's terminal, a fresh sandbox user); everyone else pairs with a code."""
         device = Device(
@@ -106,9 +112,18 @@ class DeviceRegistry:
             user_id=user_id,
             key=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),
             name=name[:60],
+            transcriber=transcriber[:40],
         )
         self.store.put("device", device.device_id, {**asdict(device), "paired_at": self.clock(), "revoked_at": None})
         return device
+
+    def set_transcriber(self, device_id: str, transcriber: str) -> bool:
+        """Operator action: mark an already paired device as one that recognises speech itself."""
+        doc = self.store.get("device", device_id)
+        if doc is None or doc.get("revoked_at") is not None:
+            return False
+        self.store.put("device", device_id, {**doc, "transcriber": transcriber[:40]})
+        return True
 
     def revoke(self, device_id: str) -> bool:
         return self.store.set_once("device", device_id, "revoked_at", self.clock())
@@ -117,7 +132,7 @@ class DeviceRegistry:
         doc = self.store.get("device", device_id)
         if doc is None or doc.get("revoked_at") is not None:
             return None
-        return Device(doc["device_id"], doc["user_id"], doc["key"], doc.get("name", ""))
+        return Device(doc["device_id"], doc["user_id"], doc["key"], doc.get("name", ""), doc.get("transcriber") or "")
 
     # request authentication -----------------------------------------------------
     def authenticate(self, headers: Mapping[str, str], method: str, path: str, body: bytes) -> Device:

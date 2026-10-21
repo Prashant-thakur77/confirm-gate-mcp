@@ -293,13 +293,15 @@ class Gate:
         return self._record(device, doc, "voice", d, fp, evidence_id, transcript=transcript,
                             media_ref=media_ref, transcriber=transcriber)
 
-    def submit_transcript(self, device: Device, pending_id: str, nonce: str, transcript: str, *,
-                          source: str) -> dict[str, Any]:
+    def submit_transcript(self, device: Device, pending_id: str, nonce: str, transcript: str) -> dict[str, Any]:
         """Evidence from a paired voice device that recognises speech itself (for example a smart-speaker skill).
 
         The words come from the device's own speech recogniser, signed by the device key; they are decided
-        by the same consent rules as audio evidence. ``source`` names the recogniser in the receipt.
+        by the same consent rules as audio evidence. Only a device paired with a ``transcriber`` may send them,
+        and the receipt names that recogniser (never one the request chose).
         """
+        if not device.transcriber:
+            raise EvidenceRejected("this device does not recognise speech itself; send the audio or a tap")
         doc = self._open_for(device, pending_id, nonce)
         text = str(transcript or "").strip()[:200]
         evidence_id = "ev_" + secrets.token_hex(12)
@@ -308,7 +310,7 @@ class Gate:
         if not self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id}):
             raise EvidenceRejected("this answer has already been given for these cards")
         d = decide(text, len(doc["options"]), stage=doc["stage"], echo=_echo(doc)).as_dict()
-        return self._record(device, doc, "transcript", d, fp, evidence_id, transcript=text, transcriber=source[:40])
+        return self._record(device, doc, "transcript", d, fp, evidence_id, transcript=text, transcriber=device.transcriber)
 
     # confirming ------------------------------------------------------------------
     def _refuse(self, pending_id: Any, reason: str, checks: list[dict[str, Any]]) -> dict[str, Any]:

@@ -97,6 +97,12 @@ def device(devices: DeviceRegistry) -> Any:
     return devices.pair(code, name="test tablet")
 
 
+@pytest.fixture()
+def voice_device(devices: DeviceRegistry) -> Any:
+    """A device that recognises speech itself (a smart-speaker skill): paired as such by the operator."""
+    return devices.pair(devices.start_pairing("u1", transcriber="alexa"), name="speaker")
+
+
 FAN_OPTIONS = [
     ("home_set", {"device": "fan", "state": "on"}),
     ("home_set", {"device": "lights", "state": "on"}),
