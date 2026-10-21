@@ -7,10 +7,9 @@ import json
 from typing import Any
 
 import pytest
+from confirm_gate import AuthError, DeviceRegistry, Gate, PairingError, device_routes, sign_request
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
-
-from confirm_gate import AuthError, DeviceRegistry, Gate, PairingError, device_routes, sign_request
 
 from .conftest import FAN_OPTIONS, Clock
 

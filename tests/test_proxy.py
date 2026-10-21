@@ -6,11 +6,10 @@ import json
 from typing import Any
 
 import pytest
+from confirm_gate import DeviceRegistry, Gate, GatedServer, MemoryStore, wrap_upstream
 from mcp import Client
 from mcp.server import MCPServer
 from mcp_types import ToolAnnotations
-
-from confirm_gate import DeviceRegistry, Gate, GatedServer, MemoryStore, wrap_upstream
 
 from .conftest import Clock, House
 

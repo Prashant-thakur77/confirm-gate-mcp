@@ -9,9 +9,8 @@ from typing import Any
 
 import boto3
 import pytest
-from moto import mock_aws
-
 from confirm_gate import DynamoStore, MemoryStore, SqliteStore
+from moto import mock_aws
 
 
 @pytest.fixture(params=["memory", "sqlite", "dynamodb"])
@@ -147,7 +146,7 @@ def test_real_dynamodb_set_once_under_contention() -> None:
         wins: list[bool] = []
         barrier = threading.Barrier(16)
 
-        def go(i: int, key: str = key) -> None:
+        def go(i: int, key: str = key, barrier: threading.Barrier = barrier, wins: list[bool] = wins) -> None:
             barrier.wait()
             wins.append(store.set_once("racetest", key, "consumed_at", float(i)))
 

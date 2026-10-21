@@ -4,7 +4,6 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-
 from confirm_gate import ActionRegistry, DeviceRegistry, Gate, MemoryStore, SqliteStore
 
 

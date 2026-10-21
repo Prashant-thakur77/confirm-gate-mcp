@@ -2,11 +2,10 @@
 import secrets
 
 import uvicorn
-from mcp.server import MCPServer
-from mcp_types import ToolAnnotations
-
 from confirm_gate import SqliteStore
 from confirm_gate.cli import build_app
+from mcp.server import MCPServer
+from mcp_types import ToolAnnotations
 
 notes: dict[str, str] = {}
 upstream = MCPServer("notes")  # any MCP server works here: an MCPServer, a URL, or StdioServerParameters

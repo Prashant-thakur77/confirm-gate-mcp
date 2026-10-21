@@ -10,7 +10,6 @@ import threading
 from typing import Any
 
 import pytest
-
 from confirm_gate import EvidenceRejected, Gate
 from confirm_gate.receipt import verify_fingerprint
 

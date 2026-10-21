@@ -10,11 +10,10 @@ from typing import Any
 
 import httpx
 import uvicorn
-from mcp.server import MCPServer
-from mcp_types import ToolAnnotations
-
 from confirm_gate import MemoryStore, sign_request
 from confirm_gate.cli import build_app
+from mcp.server import MCPServer
+from mcp_types import ToolAnnotations
 
 HDR = {"content-type": "application/json", "accept": "application/json, text/event-stream",
        "mcp-protocol-version": "2025-11-25"}
