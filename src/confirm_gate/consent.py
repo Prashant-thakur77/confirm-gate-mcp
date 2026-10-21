@@ -24,6 +24,10 @@ Rules, each one there because the alternative produced a false accept:
   recognisers add one to a rising "yes".)
 * A Devanagari word with no mapping counts as an unknown word instead of disappearing, so a long Hindi
   sentence that merely contains "haan" is not a yes.
+* "Second" after "a", "ek", "one", "just", "half" or "in" is time, not option 2: "ek second" means
+  *one moment*. Hedges ("maybe", "probably", "shayad", "sochne do", "ruk", "kal") are undecided.
+* On the final (high-risk) card no unknown word is allowed at all, except the card's own words
+  ("yes, unlock the front door"): an unmapped word could be a hedge in a language not mapped here.
 """
 
 from __future__ import annotations
@@ -93,6 +97,25 @@ DEVANAGARI = {
     "थोड़ा": "thoda",
     "अभी": "abhi",
     "मिनट": "minute",
+    "सेकेंड": "second",
+    "शायद": "shayad",
+    "रुक": "ruk",
+    "रुकिए": "rukiye",
+    "रुकिये": "rukiye",
+    "ठहरो": "thehro",
+    "ठहरिए": "thehriye",
+    "सोचने": "sochne",
+    "सोचो": "socho",
+    "सोचता": "sochta",
+    "सोचती": "sochti",
+    "देखते": "dekhte",
+    "देखेंगे": "dekhenge",
+    "कल": "kal",
+    "बिल्कुल": "bilkul",
+    "बिलकुल": "bilkul",
+    "ज़रूर": "zaroor",
+    "जरूर": "zaroor",
+    "सही": "sahi",
 }
 
 _DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -119,10 +142,15 @@ _NO = {"no", "nope", "nah", "cancel", "stop", "none", "neither", "nahin", "nahi"
        "mat", "ruko", "dont", "don't", "not", "never", "wrong"}
 
 # Any of these means the person has not decided yet.
-_HESITATE = {"wait", "hold", "hang", "later", "minute", "moment", "sec", "baad", "zara", "thoda", "abhi"}
+_HESITATE = {"wait", "hold", "hang", "later", "minute", "minutes", "moment", "sec", "secs", "seconds", "bit", "soon",
+             "tomorrow", "tonight", "baad", "zara", "thoda", "abhi", "kal", "ruk", "rukiye", "thehro", "thehriye",
+             "thehra", "sochne", "socho", "sochta", "sochti", "sochenge", "dekhte", "dekhenge"}
+_HEDGE = {"maybe", "perhaps", "probably", "possibly", "unsure", "actually", "think", "guess", "might", "kinda",
+          "shayad", "shaayad"}
+_TIME_BEFORE_SECOND = {"a", "ek", "one", "1", "just", "half", "in", "few", "couple"}
 _QUESTION = {"who", "what", "why", "where", "when", "which", "how", "kaun", "kya", "kyun", "kyon", "kab", "kahan", "kaise"}
 _QUALIFY = {"but", "lekin", "magar", "except", "unless", "par"}
-_UNDECIDED = _HESITATE | _QUESTION | _QUALIFY
+_UNDECIDED = _HESITATE | _HEDGE | _QUESTION | _QUALIFY
 _UNMAPPED = "\u2047"  # placeholder for a Devanagari word we cannot read: always an unknown word
 
 # Words that may surround a confirmation without changing it.
@@ -132,6 +160,7 @@ _FILLER = {
     "um", "uh", "umm", "hmm", "er", "ah", "oh", "ji", "hai", "wala", "wali", "wale", "vala", "waala",
     "karo", "kar", "do", "say", "said", "of", "these", "those", "them", "all", "thank", "you", "thanks",
     "just", "now", "am", "mean", "meant", "like", "would", "id", "i'd", "yes", "no",
+    "ahead", "correct", "absolutely", "definitely", "bilkul", "zaroor", "sahi",
 }
 
 
@@ -186,11 +215,12 @@ def _option_mentions(ws: list[str], n_options: int) -> list[int]:
     return found
 
 
-def decide(transcript: str, n_options: int, *, stage: Stage = "choose") -> Decision:
+def decide(transcript: str, n_options: int, *, stage: Stage = "choose", echo: str = "") -> Decision:
     """Decide what *transcript* says about a card set of *n_options*.
 
     ``choose`` stage: a clear option number picks it; "yes" picks only when there
-    is exactly one option. ``final`` stage: only yes or no counts.
+    is exactly one option. ``final`` stage: only yes or no counts, and every word must be
+    known or one of the words of *echo* (the final card's own text).
     """
     ws = words(transcript)
     heard = " ".join(ws)
@@ -205,10 +235,15 @@ def decide(transcript: str, n_options: int, *, stage: Stage = "choose") -> Decis
     options = _option_mentions(ws, n_options)
 
     known = _YES | _NO | _FILLER | set(_STANDALONE) | set(_NEEDS_NUMBER) | _ORDINALS | {"last", "nambar"}
-    if sum(1 for w in ws if w not in known) > 2:
-        return unclear
+    said_back = set(words(echo)) if stage == "final" else set()
+    unknown = [w for w in ws if w not in known and w not in said_back]
+    if len(unknown) > 2 or (stage == "final" and unknown):
+        return unclear  # on the high-risk card even one word we can't read could be a hedge
     asks = re.search(r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard)
-    if (asks or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):
+    if asks and asks.group(0) == "do it":
+        asks = None  # "okay, do it" is an instruction, not a question
+    time_ask = any(w in ("second", "sec") and i > 0 and ws[i - 1] in _TIME_BEFORE_SECOND for i, w in enumerate(ws))
+    if (asks or time_ask or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):
         return unclear  # "ok, hang on", "okay, who is it", "yes but": still deciding (a plain "no, wait" still cancels)
 
     if has_no:

@@ -289,7 +289,7 @@ class Gate:
             transcript = transcribe(audio) or ""
         except Exception as exc:
             raise EvidenceRejected(f"could not transcribe the recording: {exc}") from exc
-        d = decide(transcript, len(doc["options"]), stage=doc["stage"]).as_dict()
+        d = decide(transcript, len(doc["options"]), stage=doc["stage"], echo=_echo(doc)).as_dict()
         return self._record(device, doc, "voice", d, fp, evidence_id, transcript=transcript,
                             media_ref=media_ref, transcriber=transcriber)
 
@@ -307,7 +307,7 @@ class Gate:
         fp = hashlib.sha256(f"transcript|{device.device_id}|{doc['pending_id']}|{text}".encode()).hexdigest()
         if not self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id}):
             raise EvidenceRejected("this answer has already been given for these cards")
-        d = decide(text, len(doc["options"]), stage=doc["stage"]).as_dict()
+        d = decide(text, len(doc["options"]), stage=doc["stage"], echo=_echo(doc)).as_dict()
         return self._record(device, doc, "transcript", d, fp, evidence_id, transcript=text, transcriber=source[:40])
 
     # confirming ------------------------------------------------------------------
@@ -476,3 +476,8 @@ def _timed(out: dict[str, Any], t0: float, t1: float | None = None, t2: float | 
     action = (t2 - t1) if (t1 is not None and t2 is not None) else 0.0
     out["timing"] = {"gate_ms": round((end - t0 - action) * 1000, 2), "action_ms": round(action * 1000, 2)}
     return out
+
+
+def _echo(doc: dict[str, Any]) -> str:
+    """The final card's own text: words a user may say back with their yes ("yes, unlock the front door")."""
+    return str(doc["options"][0].get("text") or "") if doc.get("stage") == "final" else ""

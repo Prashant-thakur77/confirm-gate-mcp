@@ -136,3 +136,52 @@ def test_hesitation_blocks_a_choice_too(said: str) -> None:
 
 def test_unmapped_devanagari_counts_as_unknown_words() -> None:
     assert decide("हाँ लेकिन पहले पूछो", 1, stage="final").kind == "unclear"
+
+
+@pytest.mark.parametrize("said", [
+    "just a second", "a second please", "in a second", "ek second", "एक सेकंड", "haan ek second",
+    "one second", "half a second", "give me a sec", "a few seconds",
+])
+def test_a_second_of_time_is_not_option_two(said: str) -> None:
+    """Second review, finding 3: "ek second" (wait a moment) was read as "option 2" and turned on the TV."""
+    assert decide(said, 3).kind == "unclear", said
+    assert decide(said, 1, stage="final").kind != "yes", said
+
+
+@pytest.mark.parametrize("said", [
+    "yeah, unsure", "maybe yes", "probably yes", "perhaps", "yes I think so", "yes, actually", "okay, tomorrow",
+    "yes, in a bit", "haan shayad", "हाँ शायद", "haan, sochne do", "हाँ सोचने दो", "haan ruk jao", "हाँ रुकिए",
+    "haan thehro", "yes I guess", "okay soon", "haan kal", "yes, might",
+])
+def test_hedges_are_never_a_yes_on_the_final_card(said: str) -> None:
+    assert decide(said, 1, stage="final").kind != "yes", said
+    assert decide(said, 1).kind != "choose", said
+
+
+@pytest.mark.parametrize("said", ["yes, frobnicate", "haan ज़बरदस्त", "okay qwerty"])
+def test_the_final_card_allows_no_unknown_words(said: str) -> None:
+    """One unknown word could be a hedge in a language we don't map; on the high-risk card that is unclear."""
+    assert decide(said, 1, stage="final").kind == "unclear", said
+
+
+@pytest.mark.parametrize("said", [
+    "yes", "yes please", "yes go ahead", "yes, that's correct", "haan bilkul", "yes definitely", "haan ji theek hai",
+    "okay do it", "haan kar do", "yes absolutely",
+])
+def test_plain_and_emphatic_yeses_still_count_on_the_final_card(said: str) -> None:
+    assert decide(said, 1, stage="final").kind == "yes", said
+
+
+@pytest.mark.parametrize("said, option", [("the second one", 2), ("second", 2), ("number two please", 2),
+                                          ("doosra wala", 2), ("सेकंड", 2), ("second option", 2)])
+def test_the_ordinal_second_still_picks_two(said: str, option: int) -> None:
+    assert decide(said, 3) == decide(said, 3).__class__("choose", option, decide(said, 3).heard), said
+
+
+def test_on_the_final_card_the_cards_own_words_are_not_unknown() -> None:
+    card = "Unlock the front door"
+    assert decide("yes, unlock the front door", 1, stage="final", echo=card).kind == "yes"
+    assert decide("yes, unlock it", 1, stage="final", echo=card).kind == "yes"
+    assert decide("yes, unlock it", 1, stage="final").kind == "unclear"
+    assert decide("yes, unlock it later", 1, stage="final", echo=card).kind == "unclear"
+    assert decide("yes, unlock the back door", 1, stage="final", echo=card).kind == "unclear"
