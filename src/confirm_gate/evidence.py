@@ -58,7 +58,8 @@ def _pad(key: str) -> str:
 
 class DeviceRegistry:
     pairing_ttl = 600
-    max_attempts = 5
+    max_attempts = 5  # pairing attempts per window, across all callers
+    attempt_window = 600
     skew = 60
 
     def __init__(self, store: Store, *, clock: Callable[[], float] = time.time) -> None:
@@ -72,37 +73,37 @@ class DeviceRegistry:
             code = f"{secrets.randbelow(10**6):06d}"
             doc = {"user_id": user_id, "expires_at": self.clock() + self.pairing_ttl, "used_at": None}
             if self.store.put_if_absent("pairing", code, doc):
-                self._reset_attempts()
                 return code
         raise PairingError("could not allocate a pairing code")
 
-    def _attempts_key(self) -> str:
-        return "global"
-
-    def _reset_attempts(self) -> None:
-        self.store.put("pairing_attempts", self._attempts_key(), {"failed": 0})
-
-    def _fail(self) -> None:
-        doc = self.store.get("pairing_attempts", self._attempts_key()) or {"failed": 0}
-        doc["failed"] = int(doc.get("failed", 0)) + 1
-        self.store.put("pairing_attempts", self._attempts_key(), doc)
-
-    def _locked(self) -> bool:
-        doc = self.store.get("pairing_attempts", self._attempts_key()) or {"failed": 0}
-        return int(doc.get("failed", 0)) >= self.max_attempts
+    def _window(self) -> tuple[str, float]:
+        w = int(self.clock() // self.attempt_window)
+        return f"w{w}", float((w + 1) * self.attempt_window)
 
     def pair(self, code: str, *, name: str = "") -> Device:
-        if self._locked():
-            raise PairingError("too many wrong codes; start pairing again")
+        """Exchange a pairing code for a device key.
+
+        Every attempt takes one unit of a shared, time-windowed budget *before* the code is looked up (an atomic
+        counter, so a burst of parallel guesses cannot outrun it); a right code gives its unit back. Nothing resets
+        the budget except the window passing, so starting a new pairing never hands a guesser fresh tries.
+        """
+        window, ends = self._window()
+        if self.store.add("pairing_attempts", window, 1, expires_at=ends) > self.max_attempts:
+            raise PairingError("too many wrong codes; try again in a few minutes")
         doc = self.store.get("pairing", str(code))
         if doc is None or doc.get("used_at") is not None or doc["expires_at"] < self.clock():
-            self._fail()
             raise PairingError("that code is wrong or has expired")
         if not self.store.set_once("pairing", str(code), "used_at", self.clock()):
             raise PairingError("that code has already been used")
+        self.store.add("pairing_attempts", window, -1, expires_at=ends)
+        return self.issue(doc["user_id"], name=name)
+
+    def issue(self, user_id: str, *, name: str = "") -> Device:
+        """Create a device for *user_id* directly. Only for callers that already know who the user is
+        (an operator's terminal, a fresh sandbox user); everyone else pairs with a code."""
         device = Device(
             device_id="d_" + secrets.token_hex(8),
-            user_id=doc["user_id"],
+            user_id=user_id,
             key=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),
             name=name[:60],
         )

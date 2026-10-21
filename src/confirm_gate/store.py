@@ -24,6 +24,7 @@ class Store(Protocol):
     def put_if_absent(self, kind: str, key: str, doc: dict[str, Any]) -> bool: ...
     def set_once(self, kind: str, key: str, field: str, value: Any, updates: dict[str, Any] | None = None) -> bool: ...
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]: ...
+    def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int: ...
 
 
 def _matches(doc: dict[str, Any], equals: dict[str, Any]) -> bool:
@@ -35,6 +36,7 @@ class MemoryStore:
 
     def __init__(self) -> None:
         self._data: dict[tuple[str, str], dict[str, Any]] = {}
+        self._counters: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     def put(self, kind: str, key: str, doc: dict[str, Any]) -> None:
@@ -66,6 +68,13 @@ class MemoryStore:
         with self._lock:
             return [copy.deepcopy(d) for (k, _), d in self._data.items() if k == kind and _matches(d, equals)]
 
+    def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
+        """Atomically add *amount* to a counter (separate from documents) and return the new value."""
+        with self._lock:
+            n = self._counters.get((kind, key), 0) + int(amount)
+            self._counters[(kind, key)] = n
+            return n
+
 
 class SqliteStore:
     """A file-backed store; safe across threads and processes via ``BEGIN IMMEDIATE``."""
@@ -88,6 +97,8 @@ class SqliteStore:
                                "until = COALESCE(json_extract(doc, '$.expires_at'), json_extract(doc, '$.at'))")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_kind_user ON docs (kind, user)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_until ON docs (until)")
+        self._conn.execute("CREATE TABLE IF NOT EXISTS counters (kind TEXT NOT NULL, key TEXT NOT NULL,"
+                           " n INTEGER NOT NULL, until REAL, PRIMARY KEY (kind, key))")
         self._writes = 0
 
     @staticmethod
@@ -118,7 +129,9 @@ class SqliteStore:
         cutoff = (now if now is not None else _time.time()) - keep_days * 86400
         with self._lock:
             cur = self._conn.execute("DELETE FROM docs WHERE until IS NOT NULL AND until < ?", (cutoff,))
-            return cur.rowcount
+            gone = cur.rowcount
+            gone += self._conn.execute("DELETE FROM counters WHERE until IS NOT NULL AND until < ?", (cutoff,)).rowcount
+            return gone
 
     def get(self, kind: str, key: str) -> dict[str, Any] | None:
         with self._lock:
@@ -169,6 +182,15 @@ class SqliteStore:
                 rows = self._conn.execute("SELECT doc FROM docs WHERE kind = ? ORDER BY rowid", (kind,)).fetchall()
         docs = [json.loads(r[0]) for r in rows]
         return [d for d in docs if _matches(d, equals)]
+
+    def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
+        """Atomically add *amount* to a counter (separate from documents) and return the new value."""
+        with self._lock:
+            row = self._conn.execute(
+                "INSERT INTO counters (kind, key, n, until) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(kind, key) DO UPDATE SET n = n + excluded.n, until = COALESCE(excluded.until, until)"
+                " RETURNING n", (kind, key, int(amount), expires_at)).fetchone()
+        return int(row[0])
 
 
 KIND_INDEX = "kind-index"
@@ -234,7 +256,7 @@ class DynamoStore:
     def get(self, kind: str, key: str) -> dict[str, Any] | None:
         resp = self._c.get_item(TableName=self.table, Key={"pk": self._pk(kind, key)}, ConsistentRead=True)
         item = resp.get("Item")
-        return json.loads(item["doc"]["S"]) if item else None
+        return json.loads(item["doc"]["S"]) if item and "doc" in item else None
 
     def put_if_absent(self, kind: str, key: str, doc: dict[str, Any]) -> bool:
         from botocore.exceptions import ClientError
@@ -274,6 +296,23 @@ class DynamoStore:
             if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
                 return False
             raise
+
+    def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
+        """Atomically add *amount* to a counter with DynamoDB ``ADD`` and return the new value.
+
+        A counter row has no ``doc``, so ``get`` and ``scan`` never see it.
+        """
+        names = {"#n": "n"}
+        values: dict[str, Any] = {":a": {"N": str(int(amount))}}
+        expr = "ADD #n :a"
+        if expires_at is not None:
+            names["#ttl"] = "ttl"
+            values[":ttl"] = {"N": str(int(expires_at) + 86400)}
+            expr += " SET #ttl = if_not_exists(#ttl, :ttl)"
+        resp = self._c.update_item(TableName=self.table, Key={"pk": self._pk(kind, key)}, UpdateExpression=expr,
+                                   ExpressionAttributeNames=names, ExpressionAttributeValues=values,
+                                   ReturnValues="ALL_NEW")
+        return int(resp.get("Attributes", {}).get("n", {}).get("N", "0"))
 
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]:
         """Every doc of *kind* matching *equals*: a Query on the kind index, or a table Scan without one.
@@ -334,7 +373,7 @@ class DynamoStore:
         docs: list[dict[str, Any]] = []
         while True:
             resp = op(**kwargs)
-            docs.extend(json.loads(i["doc"]["S"]) for i in resp.get("Items", []))
+            docs.extend(json.loads(i["doc"]["S"]) for i in resp.get("Items", []) if "doc" in i)
             if not resp.get("LastEvaluatedKey"):
                 return docs
             kwargs = {**kwargs, "ExclusiveStartKey": resp["LastEvaluatedKey"]}

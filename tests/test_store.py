@@ -85,6 +85,57 @@ def test_floats_and_bools_survive(any_store: Any) -> None:
     assert any_store.get("k", "1") == {"f": 0.125, "b": True, "n": None, "s": "", "l": []}
 
 
+def test_add_counts_atomically_and_reads_with_zero(any_store: Any) -> None:
+    assert any_store.add("ratelimit", "ip:1", 1, expires_at=100.0) == 1
+    assert any_store.add("ratelimit", "ip:1", 2, expires_at=100.0) == 3
+    assert any_store.add("ratelimit", "ip:1", -1) == 2
+    assert any_store.add("ratelimit", "ip:1", 0) == 2
+    assert any_store.add("ratelimit", "ip:2", 0) == 0
+    assert any_store.get("ratelimit", "ip:1") is None  # counters are not documents
+
+
+def test_add_under_contention_loses_no_increments(any_store: Any) -> None:
+    if isinstance(any_store, DynamoStore):
+        pytest.skip("moto's DynamoDB mock is not thread-safe; real DynamoDB ADD is atomic")
+    seen: list[int] = []
+    barrier = threading.Barrier(12)
+
+    def go() -> None:
+        barrier.wait()
+        for _ in range(10):
+            seen.append(any_store.add("ratelimit", "k", 1))
+
+    ts = [threading.Thread(target=go) for _ in range(12)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert sorted(seen) == list(range(1, 121))
+
+
+@pytest.mark.skipif(not os.environ.get("CONFIRM_GATE_IT_TABLE"), reason="set CONFIRM_GATE_IT_TABLE to a real DynamoDB table")
+def test_real_dynamodb_add_under_contention() -> None:
+    import uuid
+
+    store = DynamoStore(os.environ["CONFIRM_GATE_IT_TABLE"], region=os.environ.get("AWS_REGION", "us-east-1"))
+    key = "it-" + uuid.uuid4().hex[:12]
+    seen: list[int] = []
+    barrier = threading.Barrier(16)
+
+    def go() -> None:
+        barrier.wait()
+        for _ in range(4):
+            seen.append(store.add("racetest", key, 1, expires_at=1.0))
+
+    ts = [threading.Thread(target=go) for _ in range(16)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    store._c.delete_item(TableName=store.table, Key={"pk": {"S": f"racetest#{key}"}})
+    assert sorted(seen) == list(range(1, 65))
+
+
 @pytest.mark.skipif(not os.environ.get("CONFIRM_GATE_IT_TABLE"), reason="set CONFIRM_GATE_IT_TABLE to a real DynamoDB table")
 def test_real_dynamodb_set_once_under_contention() -> None:
     import uuid

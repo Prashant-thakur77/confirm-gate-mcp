@@ -31,14 +31,78 @@ def test_pairing_code_expires(devices: DeviceRegistry, clock: Clock) -> None:
         devices.pair(code, name="late")
 
 
+def _wrong(code: str) -> str:
+    return "000000" if code != "000000" else "111111"
+
+
 def test_pairing_locks_after_repeated_wrong_codes(devices: DeviceRegistry) -> None:
     code = devices.start_pairing("u1")
-    wrong = "000000" if code != "000000" else "111111"
     for _ in range(devices.max_attempts):
         with pytest.raises(PairingError):
-            devices.pair(wrong, name="guess")
+            devices.pair(_wrong(code), name="guess")
     with pytest.raises(PairingError):
         devices.pair(code, name="right but too late")
+
+
+def test_a_new_pairing_code_does_not_reset_the_lockout(devices: DeviceRegistry) -> None:
+    """Starting pairing must not hand a guesser a fresh budget (anyone who can start pairing could reset it)."""
+    code = devices.start_pairing("victim")
+    for _ in range(devices.max_attempts):
+        with pytest.raises(PairingError):
+            devices.pair(_wrong(code), name="guess")
+    devices.start_pairing("someone-else")
+    with pytest.raises(PairingError, match="too many"):
+        devices.pair(code, name="right but locked")
+
+
+def test_the_lockout_lifts_when_its_window_passes(devices: DeviceRegistry, clock: Clock) -> None:
+    for _ in range(devices.max_attempts):
+        with pytest.raises(PairingError):
+            devices.pair("999999", name="guess")
+    clock.advance(devices.attempt_window + 1)
+    assert devices.pair(devices.start_pairing("u1"), name="later").user_id == "u1"
+
+
+def test_right_codes_do_not_use_up_the_attempt_budget(devices: DeviceRegistry) -> None:
+    for i in range(devices.max_attempts * 3):
+        assert devices.pair(devices.start_pairing(f"u{i}"), name="ok").user_id == f"u{i}"
+
+
+def test_concurrent_wrong_guesses_are_not_all_evaluated(devices: DeviceRegistry) -> None:
+    """The budget is taken before the code is looked up, so a burst of parallel guesses can't outrun the lock."""
+    import threading
+
+    code = devices.start_pairing("victim")
+    looked_up: list[str] = []
+    real_get = devices.store.get
+
+    def counting_get(kind: str, key: str) -> Any:
+        if kind == "pairing":
+            looked_up.append(key)
+        return real_get(kind, key)
+
+    devices.store.get = counting_get  # type: ignore[method-assign]
+    barrier = threading.Barrier(40)
+
+    def guess(i: int) -> None:
+        barrier.wait()
+        try:
+            devices.pair(f"{(int(code) + 1 + i) % 10**6:06d}", name="burst")
+        except PairingError:
+            pass
+
+    ts = [threading.Thread(target=guess, args=(i,)) for i in range(40)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert len(looked_up) <= devices.max_attempts
+
+
+def test_issue_creates_a_device_without_a_code(devices: DeviceRegistry, store: Any) -> None:
+    d = devices.issue("guest-1", name="Demo visitor")
+    assert devices.get(d.device_id) == d and d.user_id == "guest-1"
+    assert store.scan("pairing") == []
 
 
 def _headers(device: Any, method: str, path: str, body: bytes, ts: float) -> dict[str, str]:
