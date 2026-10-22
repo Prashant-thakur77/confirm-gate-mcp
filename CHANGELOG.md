@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (2026-10-22)
+
+- **Pairing codes made by a device** (`start_pairing(user, minted_by=device_id)`) stop working if that device is unpaired first, and the new device records `paired_via`.
+- **Consent parser:** negated auxiliaries ("wouldn't", "can't", "cannot"...) are a no; a question is still a question after a filler or a reflexive yes ("um, is two the fan"); a polite request ("can I have two") is not a question; "the number one" and "the option one" choose one.
+- `/device/evidence` answers 400 when `input` is not a string.
+
 ## 0.5.0 (2026-10-22)
 
 - **Receipts record how the user answered on the device:** `submit_tap(..., input="touch" | "key" | "switch")` (and `input` on `/device/evidence`); the receipt's `how.input` and `evidence.input` name it, and `to_text` says "your tap", "your key press" or "your switch". An unknown input is refused.
