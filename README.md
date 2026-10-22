@@ -158,7 +158,7 @@ The device channel adds its own protections:
 - Only a device paired as a voice device (`start_pairing(user, transcriber="alexa")`) may send its own transcripts, and the receipt names that recogniser.
 - A voice recording's fingerprint can't be used twice.
 - High-risk actions need a second, separately nonced yes.
-- **More time** (WCAG 2.2.1): `gate.extend(pending_id, user_id=...)` restarts a waiting set's own clock, at most 10 times per set. It answers nothing, it is never an MCP tool, and only a route you sign for the user's own device should call it.
+- **More time** (WCAG 2.2.1): `gate.extend(pending_id, user_id=...)` restarts a waiting set's own clock, at most 10 times per set. It answers nothing, it is never an MCP tool, and only a route you sign for the user's own device should call it. `device_routes` mounts one, `POST /device/more-time {"pending_id"}`, and the built-in `/approve` page puts a **More time** button beside each set's countdown, with a polite warning at 30 s.
 
 ## Voice
 

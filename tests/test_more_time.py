@@ -6,12 +6,26 @@ Extending never answers anything: it moves one waiting set's deadline, and only 
 from __future__ import annotations
 
 import json
+import secrets
+from importlib import resources
 from typing import Any
 
 import pytest
-from confirm_gate import EvidenceRejected, Gate, GatedServer, MemoryStore, NotWaiting, wrap_upstream
+from confirm_gate import (
+    DeviceRegistry,
+    EvidenceRejected,
+    Gate,
+    GatedServer,
+    MemoryStore,
+    NotWaiting,
+    device_routes,
+    sign_request,
+    wrap_upstream,
+)
 from mcp import Client
 from mcp.server import MCPServer
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
 from .conftest import FAN_OPTIONS, Clock, House
 
@@ -190,3 +204,144 @@ async def test_more_time_is_not_a_tool_of_the_proxy() -> None:
             assert out.is_error
     assert names == {"write_note", "confirm", "pending_status"}
     assert gate.pending_status(p["pending_id"])["expires_in_s"] == 120
+
+
+# -- the device route: the user's own signed device, never the agent ------------------------------------------------
+
+@pytest.fixture()
+def client(gate: Gate, devices: DeviceRegistry) -> TestClient:
+    return TestClient(Starlette(routes=device_routes(gate, devices, transcribe=lambda audio: audio.decode())))
+
+
+def _more_time(client: TestClient, device: Any, clock: Clock, payload: Any, *, sign: bool = True) -> Any:
+    body = json.dumps(payload).encode()
+    path = f"/device/more-time?r={secrets.token_hex(6)}"  # as the page does: each signature is accepted once
+    h = {"content-type": "application/json"}
+    if sign:
+        ts = int(clock())
+        h |= {"x-device-id": device.device_id, "x-timestamp": str(ts),
+              "x-signature": sign_request(device.key, "POST", path, ts, body)}
+    return client.post(path, content=body, headers=h)
+
+
+def test_the_route_gives_the_owners_device_more_time(client: TestClient, gate: Gate, device: Any,
+                                                     clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    clock.advance(100)
+    r = _more_time(client, device, clock, {"pending_id": ps.pending_id})
+    assert r.status_code == 200, r.text
+    assert r.json()["expires_in_s"] == 120
+    assert r.json()["extensions_left"] == Gate.max_extensions - 1
+    assert r.json()["state"] == "waiting_for_user"
+    assert gate.pending_status(ps.pending_id)["expires_in_s"] == 120
+
+
+def test_the_routes_reply_never_carries_the_nonce(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    r = _more_time(client, device, clock, {"pending_id": ps.pending_id})
+    assert r.status_code == 200
+    assert "nonce" not in r.json()
+    assert ps.nonce not in r.text
+
+
+def test_the_route_answers_nothing(client: TestClient, gate: Gate, house: House, device: Any, clock: Clock) -> None:
+    before = house.snapshot()
+    ps = gate.propose("u1", FAN_OPTIONS)
+    for _ in range(3):
+        assert _more_time(client, device, clock, {"pending_id": ps.pending_id}).status_code == 200
+    assert house.snapshot() == before
+    assert gate.pending_status(ps.pending_id)["state"] == "waiting_for_user"
+
+
+def test_another_users_device_gets_404_and_the_set_keeps_its_time(client: TestClient, gate: Gate,
+                                                                  devices: DeviceRegistry, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    clock.advance(100)
+    stranger = devices.pair(devices.start_pairing("u2"), name="stranger")
+    r = _more_time(client, stranger, clock, {"pending_id": ps.pending_id})
+    assert r.status_code == 404
+    assert ps.nonce not in r.text
+    assert gate.pending_status(ps.pending_id)["expires_in_s"] == 20
+
+
+@pytest.mark.parametrize("payload", [{"pending_id": "p_nope"}, {"pending_id": ""}, {}, {"pending_id": 7},
+                                     {"pending_id": ["p_x"]}])
+def test_an_unknown_set_is_404(client: TestClient, device: Any, clock: Clock, payload: Any) -> None:
+    assert _more_time(client, device, clock, payload).status_code == 404
+
+
+def test_an_answered_set_is_409(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    gate.confirm(ps.pending_id, gate.submit_tap(device, ps.pending_id, nonce, option=1)["evidence_ref"])
+    r = _more_time(client, device, clock, {"pending_id": ps.pending_id})
+    assert r.status_code == 409
+    assert gate.pending_status(ps.pending_id)["state"] == "confirmed"
+
+
+def test_an_expired_or_withdrawn_set_is_409(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    a = gate.propose("u1", FAN_OPTIONS)
+    clock.advance(121)
+    b = gate.propose("u1", FAN_OPTIONS)
+    gate.withdraw_open("u1")
+    for ps in (a, b):
+        assert _more_time(client, device, clock, {"pending_id": ps.pending_id}).status_code == 409
+
+
+def test_a_set_out_of_more_time_is_409(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    for _ in range(Gate.max_extensions):
+        r = _more_time(client, device, clock, {"pending_id": ps.pending_id})
+    assert r.json()["extensions_left"] == 0
+    assert _more_time(client, device, clock, {"pending_id": ps.pending_id}).status_code == 409
+
+
+def test_an_unsigned_request_is_refused(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    clock.advance(100)
+    r = _more_time(client, device, clock, {"pending_id": ps.pending_id}, sign=False)
+    assert r.status_code == 401
+    assert gate.pending_status(ps.pending_id)["expires_in_s"] == 20
+
+
+def test_a_revoked_device_is_refused(client: TestClient, gate: Gate, devices: DeviceRegistry, device: Any,
+                                     clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    clock.advance(100)
+    devices.revoke(device.device_id)
+    assert _more_time(client, device, clock, {"pending_id": ps.pending_id}).status_code == 401
+    assert gate.pending_status(ps.pending_id)["expires_in_s"] == 20
+
+
+def test_the_device_cannot_choose_its_own_amount(client: TestClient, gate: Gate, device: Any, clock: Clock) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    r = _more_time(client, device, clock, {"pending_id": ps.pending_id, "seconds": 600})
+    assert r.status_code == 200
+    assert r.json()["expires_in_s"] == 120
+
+
+# -- the built-in approval page ---------------------------------------------------------------------------------------
+
+def _page() -> str:
+    return resources.files("confirm_gate").joinpath("approve.html").read_text()
+
+
+def test_the_approval_page_has_a_more_time_button_that_calls_the_route() -> None:
+    page = _page()
+    assert "More time" in page
+    assert 'signed("POST", "/device/more-time", { pending_id: set.pending_id })' in page
+    assert "expires_in_s" in page and "extensions_left" in page
+
+
+def test_the_approval_page_warns_politely_at_30_seconds() -> None:
+    page = _page()
+    assert 'aria-live="polite"' in page
+    # at 30 s this reads "30 seconds left. Choose More time to keep these cards."
+    assert "left <= 30" in page
+    assert "tell(btn && !btn.hidden ? `${left} seconds left. Choose More time to keep these cards.`" in page
+
+
+def test_the_approval_page_never_sends_the_nonce_for_more_time() -> None:
+    page = _page()
+    call = page[page.index('"/device/more-time"'):]
+    assert "nonce" not in call[:call.index(")")]

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 (2026-10-22)
+
+- **More time on the approval page**: a signed device route, `POST /device/more-time {"pending_id"}`, calls `Gate.extend` for the device's own user (404 for an unknown set or another user's, 409 for one no longer waiting or out of more time, 200 with `expires_in_s` and `extensions_left`, never the nonce). The built-in `/approve` page shows a live countdown with a large, keyboard-reachable **More time** button beside it, hidden once a set has no more time left, and a polite warning at 30 s: "30 seconds left. Choose More time to keep these cards." The route is not an MCP tool.
+
 ## 0.7.0 (2026-10-22)
 
 - **More time** (WCAG 2.2.1 Timing Adjustable): `Gate.extend(pending_id, *, user_id, seconds=None)` moves a waiting card set's deadline to now + its own time (120 s, or 60 s for the second yes; never earlier than it was), at most `Gate.max_extensions` (10) times per set. It refuses another user's set as unknown (`KeyError`) and an answered, withdrawn or expired one (`NotWaiting`), returns the public view with `extensions_left` (never the nonce), and emits an `extended` event. It is not an MCP tool of `GatedServer` or `wrap_upstream`.

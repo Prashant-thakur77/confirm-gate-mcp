@@ -18,4 +18,4 @@ __all__ = [
     "EvidenceRejected", "Gate", "GatedServer", "MemoryStore", "NotWaiting", "PairingError", "PendingSet", "SqliteStore",
     "Store", "decide", "device_routes", "normalise", "params_hash", "sign_request", "wrap_upstream",
 ]
-__version__ = "0.7.0"
+__version__ = "0.7.1"

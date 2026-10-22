@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .evidence import AuthError, Device, DeviceRegistry, PairingError
-from .gate import EvidenceRejected, Gate
+from .gate import EvidenceRejected, Gate, NotWaiting
 
 MediaSink = Callable[[bytes, Device, str], str]
 
@@ -123,6 +123,26 @@ def device_routes(
         out = await gate.aconfirm(data.get("pending_id"), data.get("evidence_ref"))
         return JSONResponse(out)
 
+    async def more_time(request: Request) -> JSONResponse:
+        """More time for one of the user's own waiting card sets (WCAG 2.2.1). Device channel only, never MCP."""
+        try:
+            device, body = await authenticate(request, devices)
+            data = _json(body)
+        except AuthError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        pid = data.get("pending_id")
+        if not isinstance(pid, str) or not pid:
+            return JSONResponse({"error": "no such card set"}, status_code=404)
+        try:
+            out = await anyio.to_thread.run_sync(lambda: gate.extend(pid, user_id=device.user_id))
+        except KeyError:
+            return JSONResponse({"error": "no such card set"}, status_code=404)
+        except NotWaiting as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse(out)
+
     async def receipts(request: Request) -> JSONResponse:
         try:
             device, _ = await authenticate(request, devices)
@@ -136,5 +156,6 @@ def device_routes(
         Route(f"{prefix}/pending", pending, methods=["GET"]),
         Route(f"{prefix}/evidence", evidence, methods=["POST"]),
         Route(f"{prefix}/confirm", confirm, methods=["POST"]),
+        Route(f"{prefix}/more-time", more_time, methods=["POST"]),
         Route(f"{prefix}/receipts", receipts, methods=["GET"]),
     ]

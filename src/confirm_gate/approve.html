@@ -34,6 +34,9 @@
           letter-spacing: .2em; background: var(--card); color: var(--ink); }
   .receipt { background: var(--okbg); color: var(--ok); border-color: var(--ok); }
   .muted { color: var(--muted); font-size: .9rem; }
+  .timer { align-items: center; }
+  .left { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .left.low { color: var(--warn); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   @media (prefers-reduced-motion: no-preference) { .card { transition: transform .15s; } }
 </style>
@@ -43,6 +46,7 @@
   <h1>Approve actions</h1>
   <p class="lead">Nothing your AI agent asks to change happens until you approve it here.</p>
   <div id="live" class="sr" aria-live="assertive"></div>
+  <div id="polite" class="sr" aria-live="polite"></div>
   <section id="pair" class="card" hidden>
     <h2 id="pair-h">Pair this device</h2>
     <form id="pair-form" aria-labelledby="pair-h">
@@ -77,8 +81,59 @@ async function signed(method, path, payload) {
 }
 
 function say(text) { document.getElementById("live").textContent = text; }
+function tell(text) { document.getElementById("polite").textContent = text; }
 const seen = new Set();
 let shown = null;
+const deadlines = new Map();  // pending_id -> when its cards close (ms), from the server's expires_in_s
+const noMore = new Set();     // sets that can have no more time
+const warned = new Set();
+const clockText = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const spoken = (s) => s % 60 === 0 ? `${s / 60} minute${s === 60 ? "" : "s"}` : `${s} seconds`;
+
+function track(sets) {
+  for (const set of sets) {
+    const at = Date.now() + set.expires_in_s * 1000;
+    // the server is the truth (another device may have given more time); ignore polling jitter
+    if (Math.abs((deadlines.get(set.pending_id) ?? 0) - at) > 2000) deadlines.set(set.pending_id, at);
+  }
+}
+
+function tick() {
+  for (const el of document.querySelectorAll("[data-left]")) {
+    const id = el.dataset.left;
+    const left = Math.max(0, Math.ceil(((deadlines.get(id) ?? 0) - Date.now()) / 1000));
+    const btn = document.querySelector(`[data-more="${id}"]`);
+    el.textContent = left ? `Open for ${clockText(left)}` : "Time is up";
+    el.classList.toggle("low", left <= 30);
+    if (btn) btn.hidden = !left || noMore.has(id);
+    if (left > 30) warned.delete(id);  // more time given: warn again when it runs low
+    else if (left && !warned.has(id)) {
+      warned.add(id);
+      tell(btn && !btn.hidden ? `${left} seconds left. Choose More time to keep these cards.` : `${left} seconds left to answer.`);
+    }
+  }
+}
+
+async function moreTime(set, btn, card) {
+  if (btn.getAttribute("aria-disabled")) return;
+  btn.setAttribute("aria-disabled", "true");
+  try {
+    const r = await signed("POST", "/device/more-time", { pending_id: set.pending_id });
+    if (r.status === 200) {
+      deadlines.set(set.pending_id, Date.now() + r.json.expires_in_s * 1000);
+      if (r.json.extensions_left === 0) noMore.add(set.pending_id);
+      tell(`More time. These cards stay open for ${spoken(r.json.expires_in_s)}.`
+           + (r.json.extensions_left === 0 ? " That was the last More time." : ""));
+    } else {
+      if (r.status === 409) noMore.add(set.pending_id);
+      tell(r.json.error || "That did not work.");
+      if (r.status !== 409) poll();
+    }
+  } catch { tell("That did not work."); }
+  finally { btn.removeAttribute("aria-disabled"); }
+  if (noMore.has(set.pending_id) && document.activeElement === btn) card.focus();  // the button goes away: keep focus on the cards
+  tick();
+}
 
 function render(sets) {
   const key = sets.map((s) => s.pending_id).join(",");
@@ -92,7 +147,7 @@ function render(sets) {
   }
   for (const set of sets) {
     if (!seen.has(set.pending_id)) { seen.add(set.pending_id); say(`Your agent wants to: ${set.options.map((o) => o.text).join(", or ")}`); }
-    const card = document.createElement("article"); card.className = "card";
+    const card = document.createElement("article"); card.className = "card"; card.tabIndex = -1;
     card.setAttribute("aria-label", `Request ${set.pending_id}`);
     const h = document.createElement("h2");
     h.textContent = set.origin === "assistant" ? "Your agent wants to:" : "Did you mean:";
@@ -130,12 +185,18 @@ function render(sets) {
     const no = document.createElement("button"); no.textContent = "No, don't";
     no.onclick = () => answer(set, { answer: "no" });
     row.append(no);
-    const left = document.createElement("span"); left.className = "muted";
-    left.textContent = `Expires ${new Date(Date.now() + set.expires_in_s * 1000).toLocaleTimeString()}`;
-    row.append(left);
     card.append(row);
+    // how long the cards stay open, and "More time" (WCAG 2.2.1 Timing Adjustable), from this device only
+    const timer = document.createElement("div"); timer.className = "row timer";
+    const left = document.createElement("span"); left.className = "left"; left.dataset.left = set.pending_id;
+    const more = document.createElement("button"); more.type = "button"; more.textContent = "More time";
+    more.dataset.more = set.pending_id;
+    more.onclick = () => moreTime(set, more, card);
+    timer.append(left, more);
+    card.append(timer);
     box.append(card);
   }
+  tick();
 }
 
 async function answer(set, choice) {
@@ -155,7 +216,9 @@ async function poll() {
   if (!device) return;
   const r = await signed("GET", "/device/pending");
   if (r.status === 401) { localStorage.removeItem("confirm-gate.device"); device = null; showPair(); return; }
-  render(r.json.pending || []);
+  const sets = r.json.pending || [];
+  track(sets);
+  render(sets);
 }
 
 function showPair() { document.getElementById("pair").hidden = false; document.getElementById("code").focus(); }
@@ -172,6 +235,7 @@ document.getElementById("pair-form").onsubmit = async (e) => {
 
 if (!device) showPair(); else poll();
 setInterval(poll, 1500);
+setInterval(tick, 1000);
 </script>
 </body>
 </html>
