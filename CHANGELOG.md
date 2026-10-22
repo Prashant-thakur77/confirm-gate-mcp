@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-10-22)
+
+- **An Agent Skill**, `skills/add-confirm-gate/SKILL.md` (the open SKILL.md format): it teaches a coding agent to gate an MCP server, from choosing the proxy or `GatedServer` to checking that the agent's own `confirm` is refused.
+
 ## 0.4.0 (2026-10-22)
 
 For gating a server you didn't write.

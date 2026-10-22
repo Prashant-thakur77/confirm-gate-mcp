@@ -1,6 +1,6 @@
 [project]
 name = "confirm-gate-mcp"
-version = "0.4.0"
+version = "0.4.1"
 description = "Confirm-before-act for MCP: write tools become pending actions that only the user's own voice or tap can release."
 readme = "README.md"
 license = "MIT"

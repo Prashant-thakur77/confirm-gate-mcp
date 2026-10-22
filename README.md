@@ -101,6 +101,8 @@ with gate:
 
 The gated tools tell the agent what is going on: each write's description says it waits for the user's own confirmation, its reply is `pending_user_confirmation`, and `pending_status` tells it when the user has decided.
 
+**Agent Skill.** [`skills/add-confirm-gate/SKILL.md`](skills/add-confirm-gate/SKILL.md) teaches a coding agent (Claude Code, Kiro, Cursor) to put the gate in front of a server: which way in, `--strict` for servers you didn't write, how to choose reads and high-risk tools, and how to check the result.
+
 ## In your own server (20 lines)
 
 [`examples/wrap_any_server.py`](examples/wrap_any_server.py) wraps an in-process server. The same `build_app(upstream, …)` call accepts any of these:
