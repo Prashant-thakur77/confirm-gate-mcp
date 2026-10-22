@@ -1,5 +1,6 @@
-"""``confirm-gate serve``: put the gate in front of any MCP server, with a built-in approval page.
+"""``confirm-gate``: put the gate in front of any MCP server, with a built-in approval page.
 
+    confirm-gate demo        # try it first: a built-in notes server (list_notes, write_note) behind the gate
     confirm-gate serve --upstream http://127.0.0.1:8000/mcp
     confirm-gate serve --upstream-cmd "npx -y @modelcontextprotocol/server-filesystem /tmp/sandbox"
     confirm-gate serve --upstream https://example.com/mcp --strict --reads "get_*,list_*" --high-risk "delete_*"
@@ -19,6 +20,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from mcp.server import MCPServer
+from mcp_types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -67,18 +70,45 @@ def build_app(upstream: Any, *, store: Store, token: str, user: str = "me", read
     return app, devices
 
 
-def parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="confirm-gate", description=__doc__.split("\n\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("serve", help="gate an upstream MCP server")
-    src = s.add_mutually_exclusive_group(required=True)
-    src.add_argument("--upstream", help="upstream Streamable HTTP URL, e.g. http://127.0.0.1:8000/mcp")
-    src.add_argument("--upstream-cmd", help="upstream stdio command, e.g. 'uvx mcp-server-time'")
+def demo_upstream() -> tuple[MCPServer, dict[str, str]]:
+    """The server behind ``confirm-gate demo``: one read (``list_notes``) and one write (``write_note``)."""
+    notes: dict[str, str] = {}
+    upstream = MCPServer("notes")
+
+    @upstream.tool(annotations=ToolAnnotations(read_only_hint=True))
+    def list_notes() -> dict[str, str]:
+        """List the saved notes."""
+        return dict(notes)
+
+    @upstream.tool()
+    def write_note(name: str, text: str) -> str:
+        """Save a note."""
+        notes[name] = text
+        return f"saved note {name!r}"
+
+    return upstream, notes
+
+
+def _common(s: argparse.ArgumentParser, *, db: str) -> None:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8800)
     s.add_argument("--user", default="me")
     s.add_argument("--token", help="agent bearer token (default: generated and printed)")
-    s.add_argument("--db", default=str(Path.home() / ".confirm-gate" / "gate.db"), help="SQLite file, or :memory:")
+    s.add_argument("--db", default=db, help=f"SQLite file, or :memory: (default: {db})")
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="confirm-gate", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("demo", help="try the gate on a built-in notes server (list_notes, write_note); "
+                                    "nothing else to install")
+    _common(d, db=":memory:")
+    s = sub.add_parser("serve", help="gate an upstream MCP server")
+    src = s.add_mutually_exclusive_group(required=True)
+    src.add_argument("--upstream", help="upstream Streamable HTTP URL, e.g. http://127.0.0.1:8000/mcp")
+    src.add_argument("--upstream-cmd", help="upstream stdio command, e.g. "
+                                            "'npx -y @modelcontextprotocol/server-filesystem ~/sandbox'")
+    _common(s, db=str(Path.home() / ".confirm-gate" / "gate.db"))
     s.add_argument("--reads", default="", help="comma-separated tools or patterns (list_*) to treat as reads")
     s.add_argument("--writes", default="", help="comma-separated tools or patterns to gate even if marked read-only")
     s.add_argument("--high-risk", default="", help="comma-separated tools or patterns that need a second yes")
@@ -92,24 +122,37 @@ def main(argv: list[str] | None = None) -> None:
 
     import uvicorn
 
-    if args.upstream_cmd:
-        from mcp import StdioServerParameters
-
-        parts = shlex.split(args.upstream_cmd)
-        upstream: Any = StdioServerParameters(command=parts[0], args=parts[1:])
-    else:
-        upstream = args.upstream
     store: Store = MemoryStore() if args.db == ":memory:" else SqliteStore(args.db)
     token = args.token or secrets.token_urlsafe(24)
-    split = lambda v: [x.strip() for x in v.split(",") if x.strip()]  # noqa: E731
-    app, devices = build_app(upstream, store=store, token=token, user=args.user, reads=split(args.reads),
-                             writes=split(args.writes), high_risk=split(args.high_risk),
-                             trust_annotations=not args.strict)
+    if args.cmd == "demo":
+        what = "the built-in demo notes server (list_notes reads, write_note writes)"
+        app, devices = build_app(demo_upstream()[0], store=store, token=token, user=args.user)
+    else:
+        if args.upstream_cmd:
+            from mcp import StdioServerParameters
+
+            parts = shlex.split(args.upstream_cmd)
+            upstream: Any = StdioServerParameters(command=parts[0], args=parts[1:])
+        else:
+            upstream = args.upstream
+        what = args.upstream or args.upstream_cmd
+        split = lambda v: [x.strip() for x in v.split(",") if x.strip()]  # noqa: E731
+        app, devices = build_app(upstream, store=store, token=token, user=args.user, reads=split(args.reads),
+                                 writes=split(args.writes), high_risk=split(args.high_risk),
+                                 trust_annotations=not args.strict)
     code = devices.start_pairing(args.user)
     base = f"http://{args.host}:{args.port}"
-    print(f"\n  confirm-gate in front of {args.upstream or args.upstream_cmd}\n"
+    print(f"\n  confirm-gate in front of {what}\n"
           f"  Agent MCP endpoint: {base}/mcp   (Authorization: Bearer {token})\n"
           f"  Approve on your device: {base}/approve   pairing code {code} (10 minutes)\n", flush=True)
+    if args.cmd == "demo":
+        print(f"  Try it:\n"
+              f"    1. Open {base}/approve and enter the pairing code.\n"
+              f"    2. In another terminal: npx @modelcontextprotocol/inspector\n"
+              f"       Transport Streamable HTTP, URL {base}/mcp, header Authorization: Bearer {token}\n"
+              f"    3. Call list_notes (a read: it runs now), then write_note (a write: it waits).\n"
+              f"       A card appears on the approval page. Tap it: the note is saved, with a receipt.\n"
+              f"  Stop with Ctrl+C. Nothing is kept: the demo runs in memory.\n", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

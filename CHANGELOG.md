@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 (2026-10-22)
+
+- **DynamoStore never mistakes an IAM refusal for a missing index.** A policy covering the table but not its indexes made every lookup fall back, silently, to a full-table scan; the refusal is now raised.
+
+- **`confirm-gate demo`**: the gate in front of a built-in notes server with one read (`list_notes`) and one write (`write_note`), in memory, with nothing else to install. Like `serve`, it prints the endpoint, the bearer token, the approval page and a pairing code, and then the steps to see a card. The README's "60 seconds" is built on it: install, run `confirm-gate demo`, pair on `/approve`, call `write_note` from MCP Inspector, tap the card, and get a receipt.
+- **`build_app` is exported from `confirm_gate`.** `from confirm_gate.cli import build_app` still works.
+- **The package is typed:** it ships `py.typed`.
+- **`uvicorn` is a declared dependency.** The command line always imported it, but it used to arrive only through `mcp`.
+- **Package metadata:** project URLs (homepage, source, changelog, issues, docs) and classifiers (Python 3.12 and 3.13, Development Status 4 - Beta, Typing :: Typed).
+- **Docs:** `docs/API.md` covers `GatedServer`, `wrap_upstream`, `build_app`, `device_routes`, `Gate`, `DeviceRegistry`, the `Store` protocol and its three stores, receipt fields and every CLI flag. The README has client configs for Claude Code, `mcp.json` (Cursor, VS Code), MCP Inspector and Strands, and shows `serve --strict` with the official filesystem server. The install lines use the GitHub URL until the package is on PyPI.
+- **Community files:** `CONTRIBUTING.md` (setup, the failing-test-first rule for the gate, release steps with the trusted-publishing workflow), `CODE_OF_CONDUCT.md`, `SECURITY.md` (supported versions, private advisories), issue forms and a pull request template.
+
 ## 0.7.2 (2026-10-22)
 
 - **A lone high-risk card still asks twice.** It used to open straight at the final yes/no, so one yes released it, unlike the same action offered beside other cards. Now every high-risk card is chosen first and then asks a second, separately nonced yes; a "no" still cancels at once. To open a set at the final question on purpose, pass `stage="final"` to `propose`.

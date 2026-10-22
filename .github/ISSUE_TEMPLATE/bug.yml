@@ -1,0 +1,63 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a way for a write to run without the user's own confirmation, or a nonce or key that leaks?
+        Don't file it here: report it privately through a
+        [security advisory](https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The command or code, as small as you can make it. A failing test is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: confirm-gate-mcp version
+      description: "`pip show confirm-gate-mcp`, or the commit if you installed from GitHub."
+    validations:
+      required: true
+  - type: dropdown
+    id: way-in
+    attributes:
+      label: How you run the gate
+      options:
+        - confirm-gate demo
+        - confirm-gate serve
+        - wrap_upstream / build_app in Python
+        - GatedServer in Python
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store
+      options:
+        - MemoryStore (or --db :memory:)
+        - SqliteStore (the serve default)
+        - DynamoStore
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Python version, OS, `mcp` version, and the MCP client (Claude Code, Cursor, Inspector, Strands...).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or traceback
+      description: Remove any bearer tokens, device keys or nonces before you paste.
+      render: text

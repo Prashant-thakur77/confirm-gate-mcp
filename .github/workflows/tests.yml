@@ -27,3 +27,4 @@ jobs:
         run: |
           python -m venv /tmp/w && /tmp/w/bin/pip install dist/*.whl
           /tmp/w/bin/confirm-gate serve --help
+          /tmp/w/bin/confirm-gate demo --help

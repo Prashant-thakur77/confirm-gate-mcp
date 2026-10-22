@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new
+    about: A way past the gate, or a leaked nonce or key. Report it privately, never in a public issue.
+  - name: Python API and CLI reference
+    url: https://github.com/Prashant-thakur77/confirm-gate-mcp/blob/main/docs/API.md
+    about: How GatedServer, wrap_upstream, build_app, the Gate and the stores work.

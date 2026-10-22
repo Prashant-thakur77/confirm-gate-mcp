@@ -44,34 +44,53 @@ Measured in SureSay's evaluation ([report](https://github.com/Prashant-thakur77/
 
 ## 60 seconds
 
+Python 3.12+. Until the first PyPI release (coming soon), install from GitHub:
+
 ```bash
 pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp"
-confirm-gate serve --upstream-cmd "uvx mcp-server-time"       # or --upstream http://host:port/mcp
+confirm-gate demo
 ```
 
-It prints three things:
+`confirm-gate demo` puts the gate in front of a small built-in notes server with one read tool, `list_notes`, and one write tool, `write_note`. There's nothing else to install. It prints:
 
-- the agent's endpoint, `http://127.0.0.1:8800/mcp`, with a bearer token;
-- the approval page, `http://127.0.0.1:8800/approve`;
-- a 6-digit pairing code.
-
-Open the page, enter the code, and point your agent at the endpoint. When the agent calls a write tool, it gets back:
-
-```json
-{"status": "pending_user_confirmation", "pending_id": "p_3f…", "preview": ["write_note(name='a', text='hi')"],
- "message": "Waiting for the user to confirm on their device. Nothing has changed yet."}
+```
+  Agent MCP endpoint: http://127.0.0.1:8800/mcp   (Authorization: Bearer <token>)
+  Approve on your device: http://127.0.0.1:8800/approve   pairing code 004730 (10 minutes)
 ```
 
-The card appears on your page, and nothing happens until you approve it there.
+1. **Pair.** Open `http://127.0.0.1:8800/approve` in a browser and enter the pairing code.
+2. **Ask.** In another terminal, run `npx @modelcontextprotocol/inspector` (MCP Inspector 2.x needs Node 22.19+). Connect with transport **Streamable HTTP**, the URL `http://127.0.0.1:8800/mcp` and the header `Authorization: Bearer <token>`. Call `list_notes`, which runs straight away. Then call `write_note`, which doesn't run. It answers:
 
-## A server you don't control: `--strict`
+   ```json
+   {"status": "pending_user_confirmation", "pending_id": "p_9be2…", "preview": ["write_note(name='shopping', text='milk')"],
+    "stage": "choose", "message": "Waiting for the user to confirm on their device. Nothing has changed yet."}
+   ```
 
-By default a tool the upstream marks `readOnlyHint` passes through. For a server you didn't write, don't take its word for it:
+3. **Approve.** The card is now on the approval page. Tap it. The page says `Done: write_note(name='shopping', text='milk'). Confirmed by your tap. (receipt rcpt_…)`, `list_notes` returns the note, and `pending_status` says `confirmed`. If you call `confirm` yourself with `evidence_ref: "the user said yes"`, it's refused, and that's the point.
+
+You can skip the Inspector's browser UI and use its CLI, or plain `curl` (with `TOKEN` set to the printed token):
+
+```bash
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8800/mcp --header "Authorization: Bearer $TOKEN" \
+    --method tools/call --tool-name write_note --tool-arg name=shopping --tool-arg text=milk
+
+curl -s http://127.0.0.1:8800/mcp -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_note","arguments":{"name":"shopping","text":"milk"}}}'
+```
+
+The demo keeps everything in memory, so stopping it forgets the notes, the pairing and the receipts.
+
+## A real server: `confirm-gate serve`
+
+`serve` puts the gate in front of any MCP server: a Streamable HTTP URL (`--upstream`) or a stdio command (`--upstream-cmd`). By default, a tool the upstream marks `readOnlyHint` passes through. For a server you didn't write, don't take its word for it: with `--strict`, only the tools you list in `--reads` pass through. For example, the official filesystem server:
 
 ```bash
 confirm-gate serve --upstream-cmd "npx -y @modelcontextprotocol/server-filesystem ~/sandbox" \
     --strict --reads "read_*,list_*,search_*,get_*,directory_tree" --high-risk "move_*"
 ```
+
+Here `read_file`, `list_directory`, `search_files` and the other reads run at once. `write_file`, `edit_file`, `create_directory` and `move_file` each wait for a card, and `move_file` needs a second yes.
 
 | option | meaning |
 |---|---|
@@ -80,13 +99,43 @@ confirm-gate serve --upstream-cmd "npx -y @modelcontextprotocol/server-filesyste
 | `--reads` | tools or glob patterns that pass through |
 | `--writes` | tools or patterns that are always gated, even if marked read-only |
 | `--high-risk` | tools or patterns that need a second, separate yes when picked from a set of cards |
-| `--token`, `--db`, `--host`, `--port`, `--user` | bearer token (default: generated), SQLite file or `:memory:`, bind address, user id |
+| `--token`, `--db`, `--host`, `--port`, `--user` | bearer token (default: generated), SQLite file (default `~/.confirm-gate/gate.db`) or `:memory:`, bind address, user id |
 
-The same options are arguments of `wrap_upstream(...)` and `build_app(...)` in Python (`trust_annotations=False` is `--strict`).
+The same options are arguments of `wrap_upstream(...)` and `build_app(...)` in Python (`trust_annotations=False` is `--strict`). [`docs/API.md`](docs/API.md) has the full Python API and CLI reference.
 
 ## With an agent
 
-Any Streamable HTTP MCP client works: give it the endpoint and the bearer token. With [Strands Agents](https://strandsagents.com) on Amazon Bedrock ([`examples/strands_agent.py`](examples/strands_agent.py)):
+Any Streamable HTTP MCP client works: give it the endpoint and the bearer token. Pass a fixed `--token` so the client's config survives a restart:
+
+```bash
+export GATE_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(24))")
+confirm-gate serve --upstream-cmd "…" --strict --reads "…" --token "$GATE_TOKEN"
+```
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http confirm-gate http://127.0.0.1:8800/mcp --header "Authorization: Bearer $GATE_TOKEN"
+```
+
+**Cursor** (`.cursor/mcp.json`) and other clients that read an `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "confirm-gate": {
+      "url": "http://127.0.0.1:8800/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+VS Code (`.vscode/mcp.json`) uses the same entry under `"servers"`, with `"type": "http"`.
+
+**MCP Inspector**, to poke at it by hand: `npx @modelcontextprotocol/inspector`, then Streamable HTTP, the endpoint and the `Authorization` header, as in [60 seconds](#60-seconds).
+
+**[Strands Agents](https://strandsagents.com)** on Amazon Bedrock ([`examples/strands_agent.py`](examples/strands_agent.py)):
 
 ```python
 from strands import Agent
@@ -201,10 +250,10 @@ Every executed write leaves a receipt with:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q     # 527 tests (5 skipped without a real DynamoDB); the DynamoDB ones run on moto
+pytest -q     # 530 tests pass (5 more need a real DynamoDB and are skipped); the DynamoDB ones run on moto
 ```
 
-Issues and pull requests are welcome. A change near the gate starts with a failing test in `tests/`. Report a security problem privately through [GitHub security advisories](https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new), not in a public issue.
+Issues and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the test rules and the release steps. A change near the gate starts with a failing test in `tests/`. Report a security problem privately through [GitHub security advisories](https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new), not in a public issue ([SECURITY.md](SECURITY.md)).
 
 ## License
 

@@ -86,3 +86,16 @@ def test_strict_mode_and_patterns_on_the_command_line() -> None:
     args = parser().parse_args(["serve", "--upstream", "http://x/mcp", "--strict", "--reads", "get_*,list_*"])
     assert args.strict is True and args.reads == "get_*,list_*"
     assert parser().parse_args(["serve", "--upstream", "http://x/mcp"]).strict is False
+
+
+def test_build_app_is_public_and_the_old_import_still_works() -> None:
+    import confirm_gate
+    from confirm_gate.cli import build_app as from_cli
+
+    assert confirm_gate.build_app is from_cli and "build_app" in confirm_gate.__all__
+
+
+def test_the_package_says_it_is_typed() -> None:
+    from importlib import resources
+
+    assert resources.files("confirm_gate").joinpath("py.typed").is_file()

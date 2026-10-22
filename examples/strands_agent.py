@@ -1,6 +1,7 @@
 """A Strands agent on Amazon Bedrock, working through the gate: it can read freely and ask for writes, never do them.
 
-    pip install "confirm-gate-mcp" strands-agents
+    pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp" strands-agents
+    # once it is on PyPI: pip install confirm-gate-mcp strands-agents
     confirm-gate serve --upstream-cmd "npx -y @modelcontextprotocol/server-filesystem /tmp/sandbox" \
         --strict --reads "read_*,list_*,search_*,get_*,directory_tree"
     GATE_TOKEN=<printed token> python examples/strands_agent.py "Tidy /tmp/sandbox: move every .tmp file into old/"
