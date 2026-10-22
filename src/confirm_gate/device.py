@@ -84,9 +84,11 @@ def device_routes(
             data = _json(body)
             pid, nonce, kind = str(data.get("pending_id", "")), str(data.get("nonce", "")), data.get("kind")
             if kind == "tap":
+                if data.get("input") is not None and not isinstance(data.get("input"), str):
+                    return JSONResponse({"error": "input must be one of: touch, key, switch"}, status_code=400)
                 out = await anyio.to_thread.run_sync(
                     lambda: gate.submit_tap(device, pid, nonce, option=data.get("option"), answer=data.get("answer"),
-                                                   input=data.get("input") if isinstance(data.get("input"), str) else None))
+                                                   input=data.get("input")))
             elif kind == "voice":
                 raw = str(data.get("audio_b64", ""))
                 if len(raw) > (max_audio_bytes * 4) // 3 + 4:  # checked before decoding: no memory blow-up

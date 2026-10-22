@@ -69,16 +69,18 @@ class DeviceRegistry:
         self.clock = clock
 
     # pairing -----------------------------------------------------------------
-    def start_pairing(self, user_id: str, *, transcriber: str = "") -> str:
+    def start_pairing(self, user_id: str, *, transcriber: str = "", minted_by: str = "") -> str:
         """A fresh 6-digit code for *user_id*; show it to the user, never to the agent.
 
         *transcriber* names the speech recogniser of a device that sends its own transcripts (a smart-speaker
         skill). Only a device paired with one may submit transcript evidence, and receipts name that recogniser.
+        *minted_by* is the paired device that asked for the code (adding a screen from a phone): the code stops
+        working if that device is unpaired first, and the new device records where it came from.
         """
         for _ in range(20):
             code = f"{secrets.randbelow(10**6):06d}"
             doc = {"user_id": user_id, "expires_at": self.clock() + self.pairing_ttl, "used_at": None,
-                   "transcriber": transcriber[:40]}
+                   "transcriber": transcriber[:40], "minted_by": minted_by}
             if self.store.put_if_absent("pairing", code, doc):
                 return code
         raise PairingError("could not allocate a pairing code")
@@ -105,13 +107,16 @@ class DeviceRegistry:
         doc = self.store.get("pairing", str(code))
         if doc is None or doc.get("used_at") is not None or doc["expires_at"] < self.clock():
             raise PairingError("that code is wrong or has expired")
+        minter = str(doc.get("minted_by") or "")
+        if minter and self.get(minter) is None:
+            raise PairingError("that code is wrong or has expired")  # the device that made it was unpaired
         if not self.store.set_once("pairing", str(code), "used_at", self.clock()):
             raise PairingError("that code has already been used")
         for key in taken:
             self.store.add("pairing_attempts", key, -1, expires_at=ends)
-        return self.issue(doc["user_id"], name=name, transcriber=str(doc.get("transcriber") or ""))
+        return self.issue(doc["user_id"], name=name, transcriber=str(doc.get("transcriber") or ""), paired_via=minter)
 
-    def issue(self, user_id: str, *, name: str = "", transcriber: str = "") -> Device:
+    def issue(self, user_id: str, *, name: str = "", transcriber: str = "", paired_via: str = "") -> Device:
         """Create a device for *user_id* directly. Only for callers that already know who the user is
         (an operator's terminal, a fresh sandbox user); everyone else pairs with a code."""
         device = Device(
@@ -121,7 +126,8 @@ class DeviceRegistry:
             name=name[:60],
             transcriber=transcriber[:40],
         )
-        self.store.put("device", device.device_id, {**asdict(device), "paired_at": self.clock(), "revoked_at": None})
+        self.store.put("device", device.device_id, {**asdict(device), "paired_at": self.clock(), "revoked_at": None,
+                                                    **({"paired_via": paired_via} if paired_via else {})})
         return device
 
     def set_transcriber(self, device_id: str, transcriber: str) -> bool:

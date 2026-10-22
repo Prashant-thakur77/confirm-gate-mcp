@@ -261,7 +261,7 @@ class Gate:
         """A choice made on the device itself. *input* says how: ``touch`` (a tap or click, the default), ``key``
         (a keyboard) or ``switch`` (single-switch scanning). The receipt records it, so "how" is exact."""
         how = input or "touch"
-        if how not in TAP_INPUTS:
+        if not isinstance(how, str) or how not in TAP_INPUTS:
             raise EvidenceRejected(f"input must be one of {', '.join(sorted(TAP_INPUTS))}")
         doc = self._open_for(device, pending_id, nonce)
         n = len(doc["options"])

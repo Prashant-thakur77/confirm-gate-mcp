@@ -249,3 +249,25 @@ def test_go_ahead_is_a_yes_on_the_final_card(said: str) -> None:
 @pytest.mark.parametrize("said", ["go ahead, wait", "go ahead later", "maybe go ahead", "don't go ahead", "go ahead? which one"])
 def test_go_ahead_with_a_hedge_or_a_no_is_not_a_yes(said: str) -> None:
     assert decide(said, 1, stage="final").kind in ("unclear", "no")
+
+
+# Fourth review, findings 1–3.
+@pytest.mark.parametrize("said", ["I wouldn't go ahead", "we can't go ahead", "i cannot go ahead", "I wouldn't say yes",
+                                  "shouldn't do number two", "I won't pick two", "didnt mean two"])
+def test_a_negated_answer_is_never_consent(said: str) -> None:
+    assert decide(said, 1).kind in ("unclear", "no")
+    assert decide(said, 3).kind in ("unclear", "no")
+
+
+@pytest.mark.parametrize("said", ["um, is two the fan", "okay is two the fan", "so is two the fan", "well is two the fan",
+                                  "हाँ is two the fan", "accha is two the fan", "uh which one is the fan"])
+def test_a_question_after_a_filler_is_still_a_question(said: str) -> None:
+    assert decide(said, 3).kind == "unclear"
+
+
+@pytest.mark.parametrize("said, option", [("the number one", 1), ("that number one please", 1), ("i want the number one", 1),
+                                          ("the option one", 1), ("can I have two", 2), ("could I get number two please", 2),
+                                          ("can i have the second one", 2)])
+def test_polite_and_numbered_answers_still_choose(said: str, option: int) -> None:
+    d = decide(said, 3)
+    assert d.kind == "choose" and d.option == option

@@ -220,3 +220,30 @@ def test_the_global_ceiling_still_bounds_guessing_from_many_sources(devices: Dev
             devices.pair(_wrong(code), name="guess", source=f"10.0.0.{i}")
     with pytest.raises(PairingError, match="too many"):
         devices.pair(code, name="fresh source", source="10.9.9.9")
+
+
+# Fourth review, finding 5: a code a device made dies with that device.
+def test_a_code_minted_by_a_device_stops_working_once_that_device_is_unpaired(devices: DeviceRegistry) -> None:
+    phone = devices.pair(devices.start_pairing("u1"), name="phone")
+    code = devices.start_pairing("u1", minted_by=phone.device_id)
+    devices.revoke(phone.device_id)
+    with pytest.raises(PairingError):
+        devices.pair(code, name="screen")
+
+
+def test_a_device_made_from_another_remembers_which(devices: DeviceRegistry, store: Any) -> None:
+    phone = devices.pair(devices.start_pairing("u1"), name="phone")
+    screen = devices.pair(devices.start_pairing("u1", minted_by=phone.device_id), name="screen")
+    assert screen.user_id == "u1"
+    assert store.get("device", screen.device_id)["paired_via"] == phone.device_id
+
+
+# Finding 6: a malformed input is an error, not a silent default.
+@pytest.mark.parametrize("bad", [["key"], 123, {"k": 1}])
+def test_a_non_string_input_kind_is_a_bad_request(client: TestClient, gate: Gate, device: Any, clock: Clock,
+                                                   bad: Any) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    r = _signed(client, device, clock, "POST", "/device/evidence",
+                {"pending_id": ps.pending_id, "nonce": nonce, "kind": "tap", "option": 1, "input": bad})
+    assert r.status_code == 400, r.text

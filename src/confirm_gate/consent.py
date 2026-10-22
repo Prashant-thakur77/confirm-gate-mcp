@@ -144,7 +144,10 @@ _DEMONSTRATIVES = {"that", "this", "the", "which", "same", "other", "wo", "woh",
 _YES = {"yes", "yeah", "yea", "yep", "yup", "confirm", "confirmed", "okay", "ok", "sure",
         "haan", "han", "haa", "haanji", "theek", "thik"}
 _NO = {"no", "nope", "nah", "cancel", "stop", "none", "neither", "nahin", "nahi", "nai", "na",
-       "mat", "ruko", "dont", "don't", "not", "never", "wrong"}
+       "mat", "ruko", "dont", "don't", "not", "never", "wrong", "cannot",
+       # a negated auxiliary negates whatever follows it: "I wouldn't go ahead", "can't pick two"
+       "can't", "cant", "won't", "wont", "wouldn't", "wouldnt", "shouldn't", "shouldnt", "couldn't", "couldnt",
+       "didn't", "didnt", "doesn't", "doesnt", "isn't", "isnt", "aren't", "arent", "mustn't", "needn't", "haven't"}
 
 # Any of these means the person has not decided yet.
 _HESITATE = {"wait", "hold", "hang", "later", "minute", "minutes", "moment", "sec", "secs", "seconds", "bit", "soon",
@@ -184,6 +187,11 @@ class Decision:
 
 # A transcript that begins like a question asks about the cards; it chooses none of them. ("do" is not here:
 # "do number" is a choice.)
+# Words that can come before a question without changing it: fillers and a reflexive yes ("okay, is two the fan").
+_LEAD_IN = {"um", "uh", "umm", "hmm", "er", "ah", "oh", "so", "well", "okay", "ok", "yes", "yeah", "haan", "accha",
+            "acha", "achha", "and", "but", "hey", "arre", "arey"}
+# Nouns that make the following "one" a number: "the number one", "the option one".
+_NUMBER_NOUNS = {"number", "nambar", "option", "card", "choice"}
 _QUESTION_START = {"is", "are", "was", "were", "does", "did", "can", "could", "will", "should", "which", "what",
                    "who", "whose", "why", "how", "kya", "kaun", "kaunsa", "kaun-sa", "kab", "kyun"}
 
@@ -218,7 +226,8 @@ def _option_mentions(ws: list[str], n_options: int) -> list[int]:
         nxt = ws[i + 1] if i + 1 < len(ws) else ""
         if w == "one" and (prev in _ORDINALS or prev in _DEMONSTRATIVES):
             continue  # "the second one", "that one": a pronoun, not option 1
-        if w == "one" and i >= 2 and ws[i - 2] in _DEMONSTRATIVES | {"the"} and prev not in _STANDALONE:
+        if (w == "one" and i >= 2 and ws[i - 2] in _DEMONSTRATIVES | {"the"} and prev not in _STANDALONE
+                and prev not in _NUMBER_NOUNS):
             continue  # "the to one", "that tree one": a misheard word, then a pronoun; never option 1
         if w == "last":
             found.append(n_options)
@@ -268,7 +277,12 @@ def decide(transcript: str, n_options: int, *, stage: Stage = "choose", echo: st
     # "is it", "can you"... asks a question; "okay, do it" is an instruction. Every match counts, not just the first.
     asks = any(m.group(0) != "do it" for m in re.finditer(
         r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard))
-    asks = asks or ws[0] in _QUESTION_START  # "is two the fan": recognisers often drop the "?"
+    # "is two the fan" (recognisers often drop the "?"), also after a filler or a yes: "um, is two the fan".
+    # A polite request is not a question: "can I have two", "could I get number two".
+    lead = next((k for k, w in enumerate(ws) if w not in _LEAD_IN), len(ws))
+    if lead < len(ws) and ws[lead] in _QUESTION_START:
+        polite = ws[lead] in ("can", "could", "may") and lead + 1 < len(ws) and ws[lead + 1] in ("i", "we")
+        asks = asks or not polite
     time_ask = any(w in ("second", "sec", "seconds", "secs") and i > 0
                    and (ws[i - 1] in _TIME_BEFORE_SECOND or ws[i - 1].isdigit()) for i, w in enumerate(ws))
     if (asks or time_ask or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):
