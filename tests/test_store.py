@@ -192,6 +192,26 @@ def test_dynamo_works_on_a_table_without_indexes() -> None:
         assert len(store.scan("receipt")) == 2
 
 
+def test_dynamo_never_mistakes_access_denied_for_a_missing_index() -> None:
+    from botocore.exceptions import ClientError
+
+    with mock_aws():
+        ddb = boto3.client("dynamodb", region_name="us-east-1")
+        DynamoStore.create_table("t-deny", client=ddb)
+        store = DynamoStore("t-deny", client=ddb)
+        store.put("pending", "p1", {"user_id": "u1"})
+
+        def denied(**kw: Any) -> Any:  # what IAM says when a policy covers the table but not its indexes
+            raise ClientError({"Error": {"Code": "AccessDeniedException", "Message":
+                               "User is not authorized to perform: dynamodb:Query on resource: "
+                               "arn:aws:dynamodb:us-east-1:1:table/t-deny/index/user-kind-index"}}, "Query")
+
+        ddb.query = denied  # type: ignore[method-assign]
+        with pytest.raises(ClientError):
+            store.scan("pending", user_id="u1")  # a misconfigured policy must fail loudly, not scan the whole table
+        assert store._has_user_index is not False and store._has_index is not False
+
+
 def test_events_get_a_ttl() -> None:
     with mock_aws():
         ddb = boto3.client("dynamodb", region_name="us-east-1")

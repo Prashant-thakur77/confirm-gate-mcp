@@ -238,6 +238,13 @@ class SqliteStore:
 
 
 KIND_INDEX = "kind-index"
+
+
+def _denied(exc: Exception) -> bool:
+    """An IAM refusal names the index too, but it is a misconfiguration, never a reason to scan the whole table."""
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+    return code in ("AccessDeniedException", "UnauthorizedOperation") or "not authorized" in str(exc).lower()
+
 USER_INDEX = "user-kind-index"  # one user's rows of one kind, without reading anyone else's
 
 
@@ -433,7 +440,7 @@ class DynamoStore:
                 return [d for d in self._pages(self._c.query, q) if _matches(d, equals)]
             except Exception as exc:
                 msg = str(exc).lower()
-                if "index" not in msg:
+                if "index" not in msg or _denied(exc):
                     raise
                 if "backfilling" not in msg:
                     self._has_user_index = False
@@ -446,6 +453,8 @@ class DynamoStore:
                         if _matches(d, equals)]
             except Exception as exc:
                 msg = str(exc).lower()
+                if _denied(exc):
+                    raise
                 if "backfilling" in msg:
                     pass  # the index is being built: scan this time, try the index again next time
                 elif "index" in msg:
