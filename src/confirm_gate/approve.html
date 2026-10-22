@@ -169,7 +169,7 @@ function render(sets) {
         div.append(ul);
       }
       if (o.risk === "high") {
-        // choosing a high-risk card brings a second, final yes; a lone high-risk card is that final yes already
+        // choosing a high-risk card, even a lone one, brings a second, final yes
         const tag = document.createElement("span"); tag.className = "tag warn";
         tag.textContent = set.stage === "final" ? "Important: check before you say yes" : "Asks twice"; div.append(tag);
       }

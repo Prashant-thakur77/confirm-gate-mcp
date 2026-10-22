@@ -201,7 +201,7 @@ Every executed write leaves a receipt with:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q     # about 420 tests; the DynamoDB ones run on moto
+pytest -q     # 527 tests (5 skipped without a real DynamoDB); the DynamoDB ones run on moto
 ```
 
 Issues and pull requests are welcome. A change near the gate starts with a failing test in `tests/`. Report a security problem privately through [GitHub security advisories](https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new), not in a public issue.

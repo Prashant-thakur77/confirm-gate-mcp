@@ -133,7 +133,7 @@ class Gate:
             built.append({"n": i, "action": name, "args": args, "text": text,
                           "risk": action.risk_for(args), "params_hash": params_hash(name, args)})
         if stage is None:
-            stage = "final" if len(built) == 1 and built[0]["risk"] == "high" else "choose"
+            stage = "choose"  # a high-risk card, even alone, is chosen first and then asks a second, separate yes
         now = self.clock()
         doc = {
             "pending_id": "p_" + secrets.token_hex(8),

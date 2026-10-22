@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2 (2026-10-22)
+
+- **A lone high-risk card still asks twice.** It used to open straight at the final yes/no, so one yes released it, unlike the same action offered beside other cards. Now every high-risk card is chosen first and then asks a second, separately nonced yes; a "no" still cancels at once. To open a set at the final question on purpose, pass `stage="final"` to `propose`.
+
 ## 0.7.1 (2026-10-22)
 
 - **More time on the approval page**: a signed device route, `POST /device/more-time {"pending_id"}`, calls `Gate.extend` for the device's own user (404 for an unknown set or another user's, 409 for one no longer waiting or out of more time, 200 with `expires_in_s` and `extensions_left`, never the nonce). The built-in `/approve` page shows a live countdown with a large, keyboard-reachable **More time** button beside it, hidden once a set has no more time left, and a polite warning at 30 s: "30 seconds left. Choose More time to keep these cards." The route is not an MCP tool.

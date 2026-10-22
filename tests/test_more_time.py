@@ -41,7 +41,7 @@ def test_more_time_restarts_the_sets_own_clock(gate: Gate, clock: Clock) -> None
 
 
 def test_a_final_yes_gets_its_own_shorter_time(gate: Gate, clock: Clock) -> None:
-    ps = gate.propose("u1", [("cart_order", {"item": "milk", "qty": 1})])
+    ps = gate.propose("u1", [("cart_order", {"item": "milk", "qty": 1})], stage="final")
     assert ps.stage == "final"
     clock.advance(50)
     assert gate.extend(ps.pending_id, user_id="u1")["expires_in_s"] == 60

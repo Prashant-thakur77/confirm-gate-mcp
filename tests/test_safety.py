@@ -255,10 +255,23 @@ def test_a_high_risk_choice_needs_a_second_yes(gate: Gate, house: House, device:
     assert house.door == "unlocked"
 
 
-def test_a_single_high_risk_proposal_goes_straight_to_yes_or_no(gate: Gate, house: House, device: Any) -> None:
+def test_a_single_high_risk_proposal_still_asks_twice(gate: Gate, house: House, device: Any) -> None:
     ps = gate.propose("u1", [("cart_order", {"item": "USB cable", "qty": 10})], origin="assistant")
     view = gate.device_pending(device)[0]
-    assert view["stage"] == "final" and view["origin"] == "assistant"
+    assert view["stage"] == "choose" and view["origin"] == "assistant"
+    ev = gate.submit_voice(device, ps.pending_id, view["nonce"], b"yes", transcribe=_voice("yes"))
+    first = gate.confirm(ps.pending_id, ev["evidence_ref"])
+    assert first["status"] == "needs_final_yes" and house.orders == []  # one yes is not enough for a risky action
+    final = gate.device_pending(device)[0]
+    assert final["pending_id"] == first["pending_id"] and final["stage"] == "final" and final["nonce"] != view["nonce"]
+    yes = gate.submit_voice(device, final["pending_id"], final["nonce"], b"yes again", transcribe=_voice("yes"))
+    assert gate.confirm(final["pending_id"], yes["evidence_ref"])["status"] == "done"
+    assert len(house.orders) == 1
+
+
+def test_a_single_high_risk_proposal_can_be_declined_at_once(gate: Gate, house: House, device: Any) -> None:
+    ps = gate.propose("u1", [("cart_order", {"item": "USB cable", "qty": 10})], origin="assistant")
+    view = gate.device_pending(device)[0]
     ev = gate.submit_voice(device, ps.pending_id, view["nonce"], b"no", transcribe=_voice("no"))
     assert gate.confirm(ps.pending_id, ev["evidence_ref"])["status"] == "cancelled"
     assert house.orders == []
