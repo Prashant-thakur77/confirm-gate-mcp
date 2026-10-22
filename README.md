@@ -1,6 +1,7 @@
 # confirm-gate-mcp
 
 [![tests](https://github.com/Prashant-thakur77/confirm-gate-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/Prashant-thakur77/confirm-gate-mcp/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/confirm-gate-mcp)](https://pypi.org/project/confirm-gate-mcp/)
 [![release](https://img.shields.io/github/v/release/Prashant-thakur77/confirm-gate-mcp)](https://github.com/Prashant-thakur77/confirm-gate-mcp/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
@@ -44,10 +45,10 @@ Measured in SureSay's evaluation ([report](https://github.com/Prashant-thakur77/
 
 ## 60 seconds
 
-Python 3.12+. Until the first PyPI release (coming soon), install from GitHub:
+Python 3.12+:
 
 ```bash
-pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp"
+pip install confirm-gate-mcp
 confirm-gate demo
 ```
 

@@ -15,7 +15,7 @@ description: Put confirm-before-act in front of an MCP server, so an AI agent ca
 ## 2a. Proxy any server
 
 ```bash
-pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp"
+pip install confirm-gate-mcp
 confirm-gate serve --upstream-cmd "<the server's stdio command>" --strict \
     --reads "get_*,list_*,search_*,read_*" --high-risk "delete_*,send_*,pay_*"
 # or: --upstream https://host/mcp

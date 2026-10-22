@@ -1,7 +1,6 @@
 """Gate any MCP server: writes wait for a human tap on their own device; reads pass straight through.
 
-    pip install "git+https://github.com/Prashant-thakur77/confirm-gate-mcp"
-    # once it is on PyPI: pip install confirm-gate-mcp
+    pip install confirm-gate-mcp
     python examples/wrap_any_server.py
 """
 import secrets

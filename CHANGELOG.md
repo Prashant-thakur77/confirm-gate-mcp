@@ -2,6 +2,8 @@
 
 ## 0.8.0 (2026-10-22)
 
+- **On PyPI:** `pip install confirm-gate-mcp` (published by GitHub trusted publishing, with no stored token).
+
 - **DynamoStore never mistakes an IAM refusal for a missing index.** A policy covering the table but not its indexes made every lookup fall back, silently, to a full-table scan; the refusal is now raised.
 
 - **`confirm-gate demo`**: the gate in front of a built-in notes server with one read (`list_notes`) and one write (`write_note`), in memory, with nothing else to install. Like `serve`, it prints the endpoint, the bearer token, the approval page and a pairing code, and then the steps to see a card. The README's "60 seconds" is built on it: install, run `confirm-gate demo`, pair on `/approve`, call `write_note` from MCP Inspector, tap the card, and get a receipt.

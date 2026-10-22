@@ -231,7 +231,7 @@ A custom store must make the atomic methods truly atomic. The tests in `tests/te
 
 - **`MemoryStore()`**: in process, with a lock. Use it for tests and single-process demos (`confirm-gate demo` uses it).
 - **`SqliteStore(path)`**: one file, safe across threads and processes (WAL, `BEGIN IMMEDIATE`). `purge(now=None, *, keep_days=30) -> int` deletes rows more than 30 days past their expiry. It also runs by itself every 500 writes.
-- **`DynamoStore(table_name, *, client=None, region=None)`**: one on-demand DynamoDB table. It needs boto3: `pip install "confirm-gate-mcp[dynamodb] @ git+https://github.com/Prashant-thakur77/confirm-gate-mcp"` (`confirm-gate-mcp[dynamodb]` once it's on PyPI). `DynamoStore.create_table(table_name, *, client=...)` creates it with the key `pk` and two indexes, `kind-index` and `user-kind-index`. One-time writes are conditional writes. Rows get a `ttl` 30 days after they expire. Turn on TTL for that attribute so DynamoDB deletes them. If an index is missing (an older table), `scan` reads the table instead. An IAM refusal raises an error, and is never mistaken for a missing index.
+- **`DynamoStore(table_name, *, client=None, region=None)`**: one on-demand DynamoDB table. It needs boto3: `pip install "confirm-gate-mcp[dynamodb]"` (`confirm-gate-mcp[dynamodb]` once it's on PyPI). `DynamoStore.create_table(table_name, *, client=...)` creates it with the key `pk` and two indexes, `kind-index` and `user-kind-index`. One-time writes are conditional writes. Rows get a `ttl` 30 days after they expire. Turn on TTL for that attribute so DynamoDB deletes them. If an index is missing (an older table), `scan` reads the table instead. An IAM refusal raises an error, and is never mistaken for a missing index.
 
 ## Receipts
 
