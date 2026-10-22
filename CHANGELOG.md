@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 (2026-10-22)
+
+- The `evidence` event carries the tap's `input` (touch, key or switch), so an activity log can say how the user answered.
+
 ## 0.6.0 (2026-10-22)
 
 - **Pairing codes made by a device** (`start_pairing(user, minted_by=device_id)`) stop working if that device is unpaired first, and the new device records `paired_via`.

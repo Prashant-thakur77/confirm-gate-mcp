@@ -253,7 +253,7 @@ class Gate:
         }
         self.store.put("evidence", evidence_id, ev)
         self._emit("evidence", pending_id=doc["pending_id"], evidence_id=evidence_id, channel=kind,
-                   decision=decision, transcript=extra.get("transcript"))
+                   decision=decision, transcript=extra.get("transcript"), input=extra.get("input"))
         return {"evidence_ref": evidence_id, "decision": decision}
 
     def submit_tap(self, device: Device, pending_id: str, nonce: str, *, option: int | None = None,
