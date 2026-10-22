@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 (2026-10-22)
+
+- **More time** (WCAG 2.2.1 Timing Adjustable): `Gate.extend(pending_id, *, user_id, seconds=None)` moves a waiting card set's deadline to now + its own time (120 s, or 60 s for the second yes; never earlier than it was), at most `Gate.max_extensions` (10) times per set. It refuses another user's set as unknown (`KeyError`) and an answered, withdrawn or expired one (`NotWaiting`), returns the public view with `extensions_left` (never the nonce), and emits an `extended` event. It is not an MCP tool of `GatedServer` or `wrap_upstream`.
+- **`Store.update(kind, key, change)`**: a compare-and-swap rewrite, retried on conflict, in every store. A write landing between its read and its write (a nonce consumed) is never lost, and DynamoDB's one-time markers survive it.
+
 ## 0.6.1 (2026-10-22)
 
 - The `evidence` event carries the tap's `input` (touch, key or switch), so an activity log can say how the user answered.

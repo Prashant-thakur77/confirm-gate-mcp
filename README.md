@@ -158,6 +158,7 @@ The device channel adds its own protections:
 - Only a device paired as a voice device (`start_pairing(user, transcriber="alexa")`) may send its own transcripts, and the receipt names that recogniser.
 - A voice recording's fingerprint can't be used twice.
 - High-risk actions need a second, separately nonced yes.
+- **More time** (WCAG 2.2.1): `gate.extend(pending_id, user_id=...)` restarts a waiting set's own clock, at most 10 times per set. It answers nothing, it is never an MCP tool, and only a route you sign for the user's own device should call it.
 
 ## Voice
 
@@ -174,7 +175,7 @@ Voice evidence is audio. The server transcribes it with your recogniser, so the 
 - `SqliteStore`: one file, safe across threads and processes.
 - `DynamoStore`: one on-demand table, conditional writes for one-time use.
 
-All three give the same `put_if_absent` / `set_once` / `add` (atomic counter) guarantees, and the same tests run against each.
+All three give the same `put_if_absent` / `set_once` / `add` (atomic counter) / `update` (compare-and-swap) guarantees, and the same tests run against each.
 
 ## Receipts
 

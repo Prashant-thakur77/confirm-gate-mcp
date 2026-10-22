@@ -255,3 +255,65 @@ def test_set_once_never_loses_a_concurrent_set_once_on_another_field(any_store: 
         assert any_store.set_once("device", "d1", "revoked_at", 5.0)
     doc = any_store.get("device", "d1")
     assert doc["revoked_at"] == 5.0 and doc["transcriber"] == "alexa"
+
+
+def test_update_replaces_a_doc_with_what_the_function_returns(any_store: Any) -> None:
+    any_store.put("pending", "p1", {"user_id": "u1", "expires_at": 10.0, "consumed_at": None})
+    out = any_store.update("pending", "p1", lambda d: {**d, "expires_at": 99.0, "extensions": 1})
+    assert out == {"user_id": "u1", "expires_at": 99.0, "consumed_at": None, "extensions": 1}
+    assert any_store.get("pending", "p1") == out
+    assert any_store.scan("pending", user_id="u1") == [out]
+
+
+def test_update_that_returns_none_changes_nothing(any_store: Any) -> None:
+    any_store.put("pending", "p1", {"expires_at": 10.0})
+    assert any_store.update("pending", "p1", lambda d: None) is None
+    assert any_store.get("pending", "p1") == {"expires_at": 10.0}
+    assert any_store.update("pending", "ghost", lambda d: {**d, "x": 1}) is None
+    assert any_store.get("pending", "ghost") is None
+
+
+def test_update_never_writes_over_a_change_made_after_its_read(any_store: Any) -> None:
+    """A nonce consumed between update's read and its write wins: update reads again and sees it."""
+    any_store.put("pending", "p1", {"expires_at": 10.0, "consumed_at": None})
+    seen: list[Any] = []
+
+    def push(doc: dict[str, Any]) -> dict[str, Any] | None:
+        seen.append(doc.get("consumed_at"))
+        if len(seen) == 1:  # someone answers the card set while we were deciding
+            assert any_store.set_once("pending", "p1", "consumed_at", 5.0, {"outcome": "confirmed"})
+        if doc.get("consumed_at") is not None:
+            return None
+        return {**doc, "expires_at": 99.0}
+
+    assert any_store.update("pending", "p1", push) is None
+    assert seen == [None, 5.0]
+    assert any_store.get("pending", "p1") == {"expires_at": 10.0, "consumed_at": 5.0, "outcome": "confirmed"}
+    assert not any_store.set_once("pending", "p1", "consumed_at", 6.0)
+
+
+def test_update_keeps_a_one_time_field_one_time(any_store: Any) -> None:
+    any_store.put("pending", "p1", {"expires_at": 10.0, "consumed_at": None})
+    assert any_store.set_once("pending", "p1", "consumed_at", 5.0)
+    any_store.update("pending", "p1", lambda d: {**d, "note": "x"})
+    assert not any_store.set_once("pending", "p1", "consumed_at", 6.0)
+    assert any_store.get("pending", "p1")["consumed_at"] == 5.0
+
+
+def test_update_under_contention_loses_no_write(any_store: Any) -> None:
+    if isinstance(any_store, DynamoStore):
+        pytest.skip("moto's DynamoDB mock is not thread-safe; the conditional write is covered above")
+    any_store.put("pending", "p", {"n": 0})
+    barrier = threading.Barrier(8)
+
+    def go() -> None:
+        barrier.wait()
+        for _ in range(5):
+            assert any_store.update("pending", "p", lambda d: {**d, "n": d["n"] + 1}) is not None
+
+    ts = [threading.Thread(target=go) for _ in range(8)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert any_store.get("pending", "p") == {"n": 40}

@@ -5,6 +5,9 @@ The whole replay story rests on two primitives every store must make atomic:
 * ``put_if_absent`` — first writer wins (fingerprints, signatures, pairing).
 * ``set_once`` — set a field only if it is still empty (consume a nonce, use evidence).
 
+A third, ``update``, rewrites a doc only if nobody changed it since it was read (a compare-and-swap, retried):
+more time for a waiting card set can never undo a nonce consumed in between.
+
 Documents are plain JSON-able dicts, addressed by ``(kind, key)``.
 """
 
@@ -14,8 +17,12 @@ import copy
 import json
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+
+Change = Callable[[dict[str, Any]], dict[str, Any] | None]
+_UPDATE_TRIES = 50  # each lost round means another writer won one, so this bounds a burst of 50 writers
 
 
 class Store(Protocol):
@@ -25,6 +32,7 @@ class Store(Protocol):
     def set_once(self, kind: str, key: str, field: str, value: Any, updates: dict[str, Any] | None = None) -> bool: ...
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]: ...
     def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int: ...
+    def update(self, kind: str, key: str, change: Change) -> dict[str, Any] | None: ...
 
 
 def _matches(doc: dict[str, Any], equals: dict[str, Any]) -> bool:
@@ -67,6 +75,24 @@ class MemoryStore:
     def scan(self, kind: str, **equals: Any) -> list[dict[str, Any]]:
         with self._lock:
             return [copy.deepcopy(d) for (k, _), d in self._data.items() if k == kind and _matches(d, equals)]
+
+    def update(self, kind: str, key: str, change: Change) -> dict[str, Any] | None:
+        """Replace a doc with ``change(doc)``, only if it is unchanged since read. ``None`` from *change* leaves it.
+
+        Returns the new doc, or ``None`` if the doc is missing or *change* declined.
+        """
+        for _ in range(_UPDATE_TRIES):
+            old = self.get(kind, key)
+            if old is None:
+                return None
+            new = change(copy.deepcopy(old))
+            if new is None:
+                return None
+            with self._lock:
+                if self._data.get((kind, key)) == old:
+                    self._data[(kind, key)] = copy.deepcopy(new)
+                    return copy.deepcopy(new)
+        return None
 
     def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
         """Atomically add *amount* to a counter (separate from documents) and return the new value."""
@@ -182,6 +208,24 @@ class SqliteStore:
                 rows = self._conn.execute("SELECT doc FROM docs WHERE kind = ? ORDER BY rowid", (kind,)).fetchall()
         docs = [json.loads(r[0]) for r in rows]
         return [d for d in docs if _matches(d, equals)]
+
+    def update(self, kind: str, key: str, change: Change) -> dict[str, Any] | None:
+        """Replace a doc with ``change(doc)``, only if it is unchanged since read (see :meth:`MemoryStore.update`)."""
+        for _ in range(_UPDATE_TRIES):
+            with self._lock:
+                row = self._conn.execute("SELECT doc FROM docs WHERE kind = ? AND key = ?", (kind, key)).fetchone()
+            if row is None:
+                return None
+            new = change(json.loads(row[0]))
+            if new is None:
+                return None
+            user, until = self._meta(new)
+            with self._lock:
+                cur = self._conn.execute("UPDATE docs SET doc = ?, user = ?, until = ? WHERE kind = ? AND key = ?"
+                                         " AND doc = ?", (json.dumps(new), user, until, kind, key, row[0]))
+                if cur.rowcount == 1:
+                    return new
+        return None
 
     def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
         """Atomically add *amount* to a counter (separate from documents) and return the new value."""
@@ -305,6 +349,40 @@ class DynamoStore:
                 if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
                     raise
         return False
+
+    def update(self, kind: str, key: str, change: Change) -> dict[str, Any] | None:
+        """Replace a doc with ``change(doc)``, conditional on ``doc`` being exactly what was read.
+
+        The item's other attributes are SET, never removed, so every one-time marker survives.
+        """
+        from botocore.exceptions import ClientError
+
+        for _ in range(_UPDATE_TRIES):
+            item = self._c.get_item(TableName=self.table, Key={"pk": self._pk(kind, key)},
+                                    ConsistentRead=True).get("Item")
+            if not item or "doc" not in item:
+                return None
+            old = item["doc"]["S"]
+            new = change(json.loads(old))
+            if new is None:
+                return None
+            attrs = {k: v for k, v in self._item(kind, key, new).items() if k != "pk"}
+            names = {f"#a{i}": k for i, k in enumerate(attrs)}
+            values: dict[str, Any] = {f":a{i}": v for i, v in enumerate(attrs.values())}
+            try:
+                self._c.update_item(
+                    TableName=self.table,
+                    Key={"pk": self._pk(kind, key)},
+                    UpdateExpression="SET " + ", ".join(f"#a{i} = :a{i}" for i in range(len(attrs))),
+                    ConditionExpression="attribute_exists(pk) AND #doc = :old",
+                    ExpressionAttributeNames={**names, "#doc": "doc"},
+                    ExpressionAttributeValues={**values, ":old": {"S": old}},
+                )
+                return new
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                    raise
+        return None
 
     def add(self, kind: str, key: str, amount: int = 1, *, expires_at: float | None = None) -> int:
         """Atomically add *amount* to a counter with DynamoDB ``ADD`` and return the new value.

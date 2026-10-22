@@ -9,13 +9,13 @@ from .actions import Action, ActionRegistry, params_hash
 from .consent import Decision, decide, normalise
 from .device import device_routes
 from .evidence import AuthError, Device, DeviceRegistry, PairingError, sign_request
-from .gate import EvidenceRejected, Gate, PendingSet
+from .gate import EvidenceRejected, Gate, NotWaiting, PendingSet
 from .proxy import GatedServer, wrap_upstream
 from .store import DynamoStore, MemoryStore, SqliteStore, Store
 
 __all__ = [
     "Action", "ActionRegistry", "AuthError", "Decision", "Device", "DeviceRegistry", "DynamoStore",
-    "EvidenceRejected", "Gate", "GatedServer", "MemoryStore", "PairingError", "PendingSet", "SqliteStore",
+    "EvidenceRejected", "Gate", "GatedServer", "MemoryStore", "NotWaiting", "PairingError", "PendingSet", "SqliteStore",
     "Store", "decide", "device_routes", "normalise", "params_hash", "sign_request", "wrap_upstream",
 ]
-__version__ = "0.6.1"
+__version__ = "0.7.0"

@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import math
 import secrets
 import time
 from collections.abc import Callable, Sequence
@@ -44,6 +45,10 @@ TAP_INPUTS = frozenset({"touch", "key", "switch"})  # how a choice was made on t
 
 class EvidenceRejected(Exception):
     """Evidence the gate will not record (wrong nonce, closed set, replayed audio...)."""
+
+
+class NotWaiting(Exception):
+    """The card set is no longer waiting for its user (answered, withdrawn, expired), or has had all its more time."""
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,8 @@ class Gate:
     pending_ttl = 120.0
     final_ttl = 60.0
     evidence_ttl = 120.0
+    max_extensions = 10  # "More time" presses per card set
+    max_extend_s = 600.0
 
     def __init__(
         self,
@@ -184,6 +191,48 @@ class Gate:
                 closed += 1
                 self._emit("withdrawn", pending_id=d["pending_id"], user_id=user_id, reason=reason)
         return closed
+
+    def extend(self, pending_id: str, *, user_id: str, seconds: float | None = None) -> dict[str, Any]:
+        """More time for a card set still waiting for *user_id* (WCAG 2.2.1, Timing Adjustable).
+
+        The deadline moves to now + the set's own time (or *seconds*), never earlier than it was, at most
+        ``max_extensions`` times per set. It answers nothing and changes no option. Call it only for a request from
+        the user's own paired device: it is never an MCP tool. Returns the public view (no nonce) and
+        ``extensions_left``. Raises ``KeyError`` for an unknown set or another user's, ``NotWaiting`` for a set that
+        is answered, withdrawn, expired or out of more time, and ``ValueError`` for a strange *seconds*.
+        """
+        if seconds is not None and (isinstance(seconds, bool) or not isinstance(seconds, int | float)
+                                    or not math.isfinite(seconds) or not 0 < seconds <= self.max_extend_s):
+            raise ValueError(f"seconds must be more than 0 and at most {self.max_extend_s:.0f}")
+        why = ""
+
+        def push(doc: dict[str, Any]) -> dict[str, Any] | None:
+            nonlocal why
+            now = self.clock()
+            used = int(doc.get("extensions") or 0)
+            if doc.get("user_id") != user_id:
+                why = "unknown"
+            elif doc.get("consumed_at") is not None:
+                why = "this card set has already been answered"
+            elif doc["expires_at"] < now:
+                why = "this card set has expired"
+            elif used >= self.max_extensions:
+                why = "this card set has had all the more time it can have"
+            else:
+                why = ""
+                ttl = seconds if seconds is not None else self.final_ttl if doc["stage"] == "final" else self.pending_ttl
+                return {**doc, "expires_at": max(doc["expires_at"], now + ttl), "extensions": used + 1}
+            return None
+
+        doc = self.store.update("pending", str(pending_id or ""), push) if pending_id else None
+        if doc is None:
+            if why in ("", "unknown"):
+                raise KeyError("no such card set for this user")
+            raise NotWaiting(why)
+        view = self.public_view(doc)
+        self._emit("extended", pending_id=doc["pending_id"], user_id=user_id, expires_in_s=view["expires_in_s"],
+                   extensions=doc["extensions"])
+        return {**view, "extensions_left": self.max_extensions - doc["extensions"]}
 
     # the device side ---------------------------------------------------------------
     def _device_ok(self, device: Device) -> dict[str, Any]:
