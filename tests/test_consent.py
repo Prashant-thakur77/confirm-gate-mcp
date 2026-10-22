@@ -217,3 +217,35 @@ def test_do_it_does_not_hide_a_later_question(said: str, stage: str) -> None:
 def test_hedges_and_time_phrases_never_pick_a_card(said: str) -> None:
     """Third review, finding 6."""
     assert decide(said, 3).kind == "unclear", said
+
+
+# Found by eval/run_consent_stress.py (7,045 generated non-answers): questions and a misheard "the two one".
+@pytest.mark.parametrize("said", [
+    "is two the fan", "Is two the fan.", "which one is two", "what is option two", "is it the first one",
+    "can you do number two", "does one turn on the fan", "kya do number fan hai", "kaun sa doosra hai",
+])
+def test_a_question_without_a_question_mark_picks_nothing(said: str) -> None:
+    # recognisers often drop the "?"; a question about a card is not a choice of it
+    assert decide(said, 3).kind == "unclear"
+
+
+@pytest.mark.parametrize("said", ["the to one", "the tu one", "the free one", "the won one", "that tree one"])
+def test_one_after_the_and_an_unknown_word_is_a_pronoun_not_option_one(said: str) -> None:
+    # "the to one" is a misheard "the two one": refuse it, never read it as option one
+    assert decide(said, 3).kind == "unclear"
+
+
+@pytest.mark.parametrize("said, option", [("doosra one", 2), ("teesra one", 3), ("pehla one", 1), ("the second one", 2)])
+def test_an_ordinal_then_one_still_picks_the_ordinal(said: str, option: int) -> None:
+    d = decide(said, 3)
+    assert d.kind == "choose" and d.option == option
+
+
+@pytest.mark.parametrize("said", ["go ahead", "Go ahead.", "yes, go ahead", "haan, go ahead"])
+def test_go_ahead_is_a_yes_on_the_final_card(said: str) -> None:
+    assert decide(said, 1, stage="final").kind == "yes"
+
+
+@pytest.mark.parametrize("said", ["go ahead, wait", "go ahead later", "maybe go ahead", "don't go ahead", "go ahead? which one"])
+def test_go_ahead_with_a_hedge_or_a_no_is_not_a_yes(said: str) -> None:
+    assert decide(said, 1, stage="final").kind in ("unclear", "no")

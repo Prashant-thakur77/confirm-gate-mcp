@@ -15,7 +15,7 @@ Rules, each one there because the alternative produced a false accept:
   option 2, not options 2 and 1. "that one" picks nothing.
 * Yes and no in one utterance, or two different numbers, is unclear.
 * A number on the final yes/no card is unclear, not yes.
-* Plain "yes" cannot choose among several options.
+* Plain "yes" cannot choose among several options. "Go ahead" is a yes as a phrase, never its words alone.
 * More than two words outside the confirmation vocabulary means the user was
   saying something else ("order two of the blue cables now").
 * No sound-alikes: "to" is not "two". A mishearing is refused, not repaired.
@@ -182,6 +182,12 @@ class Decision:
         return asdict(self)
 
 
+# A transcript that begins like a question asks about the cards; it chooses none of them. ("do" is not here:
+# "do number" is a choice.)
+_QUESTION_START = {"is", "are", "was", "were", "does", "did", "can", "could", "will", "should", "which", "what",
+                   "who", "whose", "why", "how", "kya", "kaun", "kaunsa", "kaun-sa", "kab", "kyun"}
+
+
 def words(text: str) -> list[str]:
     """The comparable words of *text*: one script, lower case, digits for numerals."""
     out: list[str] = []
@@ -212,6 +218,8 @@ def _option_mentions(ws: list[str], n_options: int) -> list[int]:
         nxt = ws[i + 1] if i + 1 < len(ws) else ""
         if w == "one" and (prev in _ORDINALS or prev in _DEMONSTRATIVES):
             continue  # "the second one", "that one": a pronoun, not option 1
+        if w == "one" and i >= 2 and ws[i - 2] in _DEMONSTRATIVES | {"the"} and prev not in _STANDALONE:
+            continue  # "the to one", "that tree one": a misheard word, then a pronoun; never option 1
         if w == "last":
             found.append(n_options)
         elif w in _STANDALONE:
@@ -244,19 +252,23 @@ def decide(transcript: str, n_options: int, *, stage: Stage = "choose", echo: st
         return unclear
 
     has_no = any(w in _NO for w in ws) or "mat karo" in heard
-    has_yes = any(w in _YES for w in ws) or "theek hai" in heard
+    go_ahead = re.search(r"\bgo ahead\b", heard) is not None
+    has_yes = any(w in _YES for w in ws) or "theek hai" in heard or go_ahead
     if "kar do" in heard or "kar dijiye" in heard:
         has_yes = True  # "do it" — never a number
     options = _option_mentions(ws, n_options)
 
     known = _YES | _NO | _FILLER | set(_STANDALONE) | set(_NEEDS_NUMBER) | _ORDINALS | {"last", "nambar"}
     said_back = _card_words(echo) if stage == "final" else set()
+    if go_ahead:
+        known = known | {"go", "ahead"}  # the phrase, not the words on their own
     unknown = [w for w in ws if w not in known and w not in said_back]
     if len(unknown) > 2 or (stage == "final" and unknown):
         return unclear  # on the high-risk card even one word we can't read could be a hedge
     # "is it", "can you"... asks a question; "okay, do it" is an instruction. Every match counts, not just the first.
     asks = any(m.group(0) != "do it" for m in re.finditer(
         r"\b(is|are|was|were|do|does|did|can|could|will|should) (it|that|this|he|she|they|you|we)\b", heard))
+    asks = asks or ws[0] in _QUESTION_START  # "is two the fan": recognisers often drop the "?"
     time_ask = any(w in ("second", "sec", "seconds", "secs") and i > 0
                    and (ws[i - 1] in _TIME_BEFORE_SECOND or ws[i - 1].isdigit()) for i, w in enumerate(ws))
     if (asks or time_ask or any(w in _UNDECIDED for w in ws)) and not (has_no and not has_yes and not options):

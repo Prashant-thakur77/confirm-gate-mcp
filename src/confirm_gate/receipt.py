@@ -60,12 +60,14 @@ def build(
         },
         "how": {
             "channel": evidence["kind"],
+            "input": evidence.get("input") or ("voice" if evidence["kind"] in ("voice", "transcript") else "touch"),
             "pending_id": pending["pending_id"],
             "nonce_sha256": hashlib.sha256(pending["nonce"].encode()).hexdigest()[:12],
         },
         "evidence": {
             "evidence_id": evidence["evidence_id"],
             "channel": evidence["kind"],
+            "input": evidence.get("input") or ("voice" if evidence["kind"] in ("voice", "transcript") else "touch"),
             "transcript": evidence.get("transcript"),
             "decision": evidence["decision"],
             "fingerprint": evidence["fingerprint"],
@@ -94,7 +96,8 @@ def verify_fingerprint(receipt: dict[str, Any]) -> bool:
 
 def to_text(receipt: dict[str, Any]) -> str:
     """One sentence a screen reader or speaker can say."""
-    how = {"voice": "your voice", "transcript": "your voice"}.get(receipt["how"]["channel"], "your tap")
+    how = {"voice": "your voice", "transcript": "your voice"}.get(receipt["how"]["channel"]) or {
+        "key": "your key press", "switch": "your switch"}.get(receipt["how"].get("input", ""), "your tap")
     said = receipt["evidence"].get("transcript")
     heard = f' (heard "{said}")' if said else ""
     return f"Done: {receipt['what']['shown_as']}. Confirmed by {how}{heard}."

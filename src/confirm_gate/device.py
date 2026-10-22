@@ -85,7 +85,8 @@ def device_routes(
             pid, nonce, kind = str(data.get("pending_id", "")), str(data.get("nonce", "")), data.get("kind")
             if kind == "tap":
                 out = await anyio.to_thread.run_sync(
-                    lambda: gate.submit_tap(device, pid, nonce, option=data.get("option"), answer=data.get("answer")))
+                    lambda: gate.submit_tap(device, pid, nonce, option=data.get("option"), answer=data.get("answer"),
+                                                   input=data.get("input") if isinstance(data.get("input"), str) else None))
             elif kind == "voice":
                 raw = str(data.get("audio_b64", ""))
                 if len(raw) > (max_audio_bytes * 4) // 3 + 4:  # checked before decoding: no memory blow-up

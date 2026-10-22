@@ -394,3 +394,28 @@ def test_marking_a_voice_device_is_idempotent(devices: Any, device: Any) -> None
     assert devices.set_transcriber(device.device_id, "alexa")
     assert devices.set_transcriber(device.device_id, "alexa")  # every deploy runs it again
     assert not devices.set_transcriber(device.device_id, "another")  # a different recogniser needs a re-pair
+
+
+@pytest.mark.parametrize("given, recorded, sentence", [(None, "touch", "your tap"), ("touch", "touch", "your tap"),
+                                                       ("key", "key", "your key press"), ("switch", "switch", "your switch")])
+def test_the_receipt_says_exactly_how_the_user_answered(gate: Gate, device: Any, given: Any, recorded: str,
+                                                        sentence: str) -> None:
+    from confirm_gate.receipt import to_text
+
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    kw = {} if given is None else {"input": given}
+    ev = gate.submit_tap(device, ps.pending_id, nonce, option=1, **kw)
+    out = gate.confirm(ps.pending_id, ev["evidence_ref"])
+    assert out["status"] == "done"
+    r = out["receipt"]
+    assert r["how"]["input"] == recorded and r["evidence"]["input"] == recorded
+    assert sentence in to_text(r)
+    assert verify_fingerprint(r)
+
+
+def test_an_unknown_input_kind_is_refused(gate: Gate, device: Any) -> None:
+    ps = gate.propose("u1", FAN_OPTIONS)
+    nonce = gate.device_pending(device)[0]["nonce"]
+    with pytest.raises(EvidenceRejected):
+        gate.submit_tap(device, ps.pending_id, nonce, option=1, input="telepathy")

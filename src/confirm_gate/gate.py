@@ -39,6 +39,9 @@ Origin = Literal["user_words", "assistant"]
 OptionSpec = tuple[str, dict[str, Any]] | tuple[str, dict[str, Any], str]
 
 
+
+TAP_INPUTS = frozenset({"touch", "key", "switch"})  # how a choice was made on the device
+
 class EvidenceRejected(Exception):
     """Evidence the gate will not record (wrong nonce, closed set, replayed audio...)."""
 
@@ -254,7 +257,12 @@ class Gate:
         return {"evidence_ref": evidence_id, "decision": decision}
 
     def submit_tap(self, device: Device, pending_id: str, nonce: str, *, option: int | None = None,
-                   answer: str | None = None) -> dict[str, Any]:
+                   answer: str | None = None, input: str | None = None) -> dict[str, Any]:  # noqa: A002
+        """A choice made on the device itself. *input* says how: ``touch`` (a tap or click, the default), ``key``
+        (a keyboard) or ``switch`` (single-switch scanning). The receipt records it, so "how" is exact."""
+        how = input or "touch"
+        if how not in TAP_INPUTS:
+            raise EvidenceRejected(f"input must be one of {', '.join(sorted(TAP_INPUTS))}")
         doc = self._open_for(device, pending_id, nonce)
         n = len(doc["options"])
         if answer == "no":
@@ -274,7 +282,7 @@ class Gate:
         fp = hashlib.sha256(payload.encode()).hexdigest()
         if not self.store.put_if_absent("fingerprint", fp, {"evidence_id": evidence_id}):
             raise EvidenceRejected("this evidence has already been used")
-        return self._record(device, doc, "tap", decision, fp, evidence_id)
+        return self._record(device, doc, "tap", decision, fp, evidence_id, input=how)
 
     def submit_voice(self, device: Device, pending_id: str, nonce: str, audio: bytes, *,
                      transcribe: Callable[[bytes], str], media_ref: str | None = None,

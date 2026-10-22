@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 (2026-10-22)
+
+- **Receipts record how the user answered on the device:** `submit_tap(..., input="touch" | "key" | "switch")` (and `input` on `/device/evidence`); the receipt's `how.input` and `evidence.input` name it, and `to_text` says "your tap", "your key press" or "your switch". An unknown input is refused.
+- **Consent parser**, from a 7,093-case stress test: a transcript that starts like a question ("is two the fan", "kya do number…") chooses nothing, since recognisers drop the "?"; in "the/that ___ one" the "one" is a pronoun, never option one ("the to one"); "go ahead" is a yes as a phrase.
+
 ## 0.4.1 (2026-10-22)
 
 - **An Agent Skill**, `skills/add-confirm-gate/SKILL.md` (the open SKILL.md format): it teaches a coding agent to gate an MCP server, from choosing the proxy or `GatedServer` to checking that the agent's own `confirm` is refused.
