@@ -78,3 +78,11 @@ def test_a_human_releases_the_write_and_the_agent_cannot() -> None:
         assert notes == {"a": "hi"}
     finally:
         server.should_exit = True
+
+
+def test_strict_mode_and_patterns_on_the_command_line() -> None:
+    from confirm_gate.cli import parser
+
+    args = parser().parse_args(["serve", "--upstream", "http://x/mcp", "--strict", "--reads", "get_*,list_*"])
+    assert args.strict is True and args.reads == "get_*,list_*"
+    assert parser().parse_args(["serve", "--upstream", "http://x/mcp"]).strict is False

@@ -6,7 +6,8 @@ Two ways in:
   ``MCPServer``. Reads run. Writes return a pending card set and run only after
   ``confirm`` sees the user's evidence.
 * :func:`wrap_upstream` — proxy any existing MCP server (in-process, URL or
-  stdio). Tools marked ``readOnlyHint`` pass through; every other tool is treated
+  stdio). Tools marked ``readOnlyHint`` pass through (or, in strict mode, only the
+  tools you list as reads); every other tool is treated
   as a write. Unknown means write: the safe default.
 """
 
@@ -17,6 +18,7 @@ import inspect
 import json
 import time
 from collections.abc import Callable, Iterable
+from fnmatch import fnmatchcase
 from typing import Any
 
 import mcp_types as types
@@ -184,25 +186,33 @@ def wrap_upstream(
     reads: Iterable[str] = (),
     writes: Iterable[str] = (),
     high_risk: Iterable[str] = (),
+    trust_annotations: bool = True,
     name: str = "confirm-gate",
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[Server[Any], Gate]:
     """A gated proxy for *upstream* (an ``MCPServer``, ``Server``, URL or stdio params).
+
+    *reads*, *writes* and *high_risk* are tool names or glob patterns (``delete_*``). A tool listed in *writes* is
+    always gated. With *trust_annotations* (the default) a tool the upstream marks ``readOnlyHint`` passes through;
+    set it to False for a server you don't control, and only the tools in *reads* pass through.
 
     Returns the proxy server and its gate (pair devices with ``DeviceRegistry(gate.store)``).
     """
     store = store if store is not None else MemoryStore()
     registry = ActionRegistry()
     gate = Gate(store, registry, clock=clock, on_event=on_event)
-    force_read, force_write, high = set(reads), set(writes), set(high_risk)
+    force_read, force_write, high = list(reads), list(writes), list(high_risk)
     tools: dict[str, types.Tool] = {}
 
+    def matches(tool_name: str, patterns: list[str]) -> bool:
+        return any(fnmatchcase(tool_name, p) for p in patterns)
+
     def is_read(tool: types.Tool) -> bool:
-        if tool.name in force_write:
+        if matches(tool.name, force_write):
             return False
-        if tool.name in force_read:
+        if matches(tool.name, force_read):
             return True
-        return bool(tool.annotations and tool.annotations.read_only_hint)
+        return trust_annotations and bool(tool.annotations and tool.annotations.read_only_hint)
 
     async def refresh() -> None:
         async with Client(upstream) as c:
@@ -212,7 +222,7 @@ def wrap_upstream(
             if tool.name not in registry:
                 kind = "read" if is_read(tool) else "write"
                 registry.add(Action(tool.name, kind, _forwarder(upstream, tool.name),
-                                    "high" if tool.name in high else "low", None, tool.description or ""))
+                                    "high" if matches(tool.name, high) else "low", None, tool.description or ""))
 
     confirm_tool = types.Tool(
         name="confirm", description=CONFIRM_DESCRIPTION,

@@ -1,8 +1,16 @@
 # confirm-gate-mcp
 
+[![tests](https://github.com/Prashant-thakur77/confirm-gate-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/Prashant-thakur77/confirm-gate-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/Prashant-thakur77/confirm-gate-mcp)](https://github.com/Prashant-thakur77/confirm-gate-mcp/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
+![MCP](https://img.shields.io/badge/MCP-2025--11--25%20·%20Streamable%20HTTP-6b4fbb)
+
 **Confirm-before-act for MCP.** Put it in front of any MCP server. Read tools pass straight through. Every write tool becomes a pending card, and only the user's own tap or voice, on a device they paired, can release it.
 
 The guarantee doesn't depend on a prompt. The agent never holds the one-time nonce or the device key that a confirmation needs, so it can't approve its own action, however it's instructed. A prompt injection can make the agent *ask*, but it can't make anything *happen*.
+
+![An agent asks to send an email. The card waits on the user's phone; one tap sends it and returns a receipt.](docs/approve.jpg)
 
 ```
 agent ──MCP (bearer token)──▶  confirm-gate  ──▶ upstream MCP server
@@ -10,6 +18,29 @@ agent ──MCP (bearer token)──▶  confirm-gate  ──▶ upstream MCP se
            nonce + cards ─────────┘  └──── signed evidence (tap / voice)
                               user's paired device  (/approve page or your own app)
 ```
+
+## Why
+
+An agent that can write (send, buy, delete, unlock) needs a human yes for the actions that matter. The usual ways of getting one all run through a channel the agent, or whatever is steering it, can reach:
+
+- **A "do you approve?" in the chat.** The model can say "the user said yes", and an injected instruction can make it.
+- **Tool annotations.** `readOnlyHint` and `destructiveHint` are hints from the server. The MCP spec says clients must treat annotations as untrusted unless they come from a trusted server.
+- **A confirmation dialog in the agent's own client.** It lives in the same app as the agent, often with an "always allow" switch, and it gives nothing to audit afterwards.
+
+confirm-gate moves the yes onto a second channel. The proposal goes to the agent; the one-time nonce goes only to the user's paired device, and every request from that device is HMAC-signed with a key the agent never sees. The write runs only when the evidence from that device checks out, and every run leaves a receipt.
+
+It began as the safety layer of [SureSay](https://github.com/Prashant-thakur77/SureSay), a voice assistant for people with dysarthria. Their speech is misheard more than anyone's, so an assistant that acts on its best guess does the wrong thing to the people with the least room to undo it.
+
+## Proof
+
+Measured in SureSay's evaluation ([report](https://github.com/Prashant-thakur77/SureSay/blob/main/eval/REPORT.md#claim-3--nothing-changes-without-the-user)): 50 adversarial cases over HTTP, made up of 20 prompt injections hidden in tool output, 15 near-miss commands and 15 forged confirmations (self-confirming, replayed evidence, expired sets, cross-user evidence, captured signed requests, pairing brute force, racing confirms).
+
+| Agent | Unconfirmed changes |
+|---|---|
+| Scripted worst-case agent (obeys every injection, tries every forgery), no gate | 35 / 35 |
+| Same agent, behind the gate | **0 / 50** |
+| A real model, Amazon Nova 2 Sonic, as the agent, no gate | 11 / 35 |
+| Same model behind the gate, with `confirm` among its tools | **0 / 35** |
 
 ## 60 seconds
 
@@ -32,6 +63,43 @@ Open the page, enter the code, and point your agent at the endpoint. When the ag
 ```
 
 The card appears on your page, and nothing happens until you approve it there.
+
+## A server you don't control: `--strict`
+
+By default a tool the upstream marks `readOnlyHint` passes through. For a server you didn't write, don't take its word for it:
+
+```bash
+confirm-gate serve --upstream-cmd "npx -y @modelcontextprotocol/server-filesystem ~/sandbox" \
+    --strict --reads "read_*,list_*,search_*,get_*,directory_tree" --high-risk "move_*"
+```
+
+| option | meaning |
+|---|---|
+| `--upstream URL` / `--upstream-cmd CMD` | the server to gate: Streamable HTTP, or a stdio command |
+| `--strict` | ignore the upstream's `readOnlyHint`; only tools in `--reads` pass through ungated |
+| `--reads` | tools or glob patterns that pass through |
+| `--writes` | tools or patterns that are always gated, even if marked read-only |
+| `--high-risk` | tools or patterns that need a second, separate yes when picked from a set of cards |
+| `--token`, `--db`, `--host`, `--port`, `--user` | bearer token (default: generated), SQLite file or `:memory:`, bind address, user id |
+
+The same options are arguments of `wrap_upstream(...)` and `build_app(...)` in Python (`trust_annotations=False` is `--strict`).
+
+## With an agent
+
+Any Streamable HTTP MCP client works: give it the endpoint and the bearer token. With [Strands Agents](https://strandsagents.com) on Amazon Bedrock ([`examples/strands_agent.py`](examples/strands_agent.py)):
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands.tools.mcp import MCPClient
+
+gate = MCPClient(url="http://127.0.0.1:8800/mcp", headers={"Authorization": f"Bearer {token}"})
+with gate:
+    agent = Agent(model=BedrockModel(model_id="us.amazon.nova-2-lite-v1:0"), tools=gate.list_tools_sync())
+    agent("Move every .tmp file in ~/sandbox into old/")  # the moves wait on your phone
+```
+
+The gated tools tell the agent what is going on: each write's description says it waits for the user's own confirmation, its reply is `pending_user_confirmation`, and `pending_status` tells it when the user has decided.
 
 ## In your own server (20 lines)
 
@@ -117,6 +185,23 @@ Every executed write leaves a receipt with:
 - every check, by name.
 
 `receipt.verify_fingerprint(r)` detects a receipt edited after it was issued.
+
+## What it does not protect against
+
+- **Reads.** They pass through. Anything a read tool returns, the agent sees.
+- **A compromised paired device.** Whoever holds the device key can approve. Unpair a lost device (`DeviceRegistry.revoke`).
+- **A compromised upstream server.** The gate decides *whether* a call runs, not what the server then does with it.
+- **Approving without reading.** The card shows the exact action and arguments, and they can't change after the user chooses; it can't make anyone read them.
+- **Plain HTTP.** `confirm-gate serve` binds to localhost. Put anything reachable from elsewhere behind HTTPS.
+
+## Develop
+
+```bash
+pip install -e ".[dev]"
+pytest -q     # about 360 tests; the DynamoDB ones run on moto
+```
+
+Issues and pull requests are welcome. A change near the gate starts with a failing test in `tests/`. Report a security problem privately through [GitHub security advisories](https://github.com/Prashant-thakur77/confirm-gate-mcp/security/advisories/new), not in a public issue.
 
 ## License
 

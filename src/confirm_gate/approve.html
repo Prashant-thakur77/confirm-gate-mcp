@@ -18,7 +18,10 @@
   p.lead { color: var(--muted); margin: 0 0 24px; }
   .card { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 20px; margin: 0 0 16px; }
   .card h2 { font-size: 1.15rem; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
-  .option { font-size: 1.5rem; font-weight: 700; margin: 0 0 12px; }
+  .option { font-size: 1.5rem; font-weight: 700; margin: 0 0 12px; overflow-wrap: anywhere; }
+  .args { margin: -4px 0 12px; padding: 0; list-style: none; font: .9rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .args li { padding: 6px 10px; border-left: 4px solid var(--line); margin: 0 0 6px; overflow-wrap: anywhere; }
+  .args b { font-family: system-ui, sans-serif; display: block; color: var(--muted); font-size: .8rem; }
   .tag { display: inline-block; border: 2px solid var(--line); border-radius: 999px; padding: 0 10px; font-size: .85rem; margin-right: 8px; }
   .tag.warn { background: var(--warnbg); color: var(--warn); border-color: var(--warn); }
   .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
@@ -96,9 +99,25 @@ function render(sets) {
     card.append(h);
     for (const o of set.options) {
       const div = document.createElement("div");
-      const t = document.createElement("p"); t.className = "option"; t.textContent = o.text;
+      // a wrapped server's card reads "tool(key='value', ...)": show the tool, then each argument on its own line
+      const call = /^([A-Za-z_][\w.-]*)\((.*)\)$/s.exec(o.text);
+      const args = call ? call[2].split(/, (?=[A-Za-z_]\w*=)/).filter(Boolean) : [];
+      const t = document.createElement("p"); t.className = "option";
+      t.textContent = call && args.length ? call[1].replaceAll("_", " ") : o.text;
       div.append(t);
-      if (o.risk === "high") { const tag = document.createElement("span"); tag.className = "tag warn"; tag.textContent = "Asks twice"; div.append(tag); }
+      if (call && args.length) {
+        const ul = document.createElement("ul"); ul.className = "args";
+        for (const a of args) {
+          const i = a.indexOf("="); const li = document.createElement("li"); const b = document.createElement("b");
+          b.textContent = a.slice(0, i); li.append(b, a.slice(i + 1)); ul.append(li);
+        }
+        div.append(ul);
+      }
+      if (o.risk === "high") {
+        // choosing a high-risk card brings a second, final yes; a lone high-risk card is that final yes already
+        const tag = document.createElement("span"); tag.className = "tag warn";
+        tag.textContent = set.stage === "final" ? "Important: check before you say yes" : "Asks twice"; div.append(tag);
+      }
       const row = document.createElement("div"); row.className = "row";
       const yes = document.createElement("button"); yes.className = "primary";
       yes.textContent = set.stage === "final" ? "Yes, do it" : (set.options.length > 1 ? `Choose ${o.n}` : "Approve");

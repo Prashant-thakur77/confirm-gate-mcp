@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 (2026-10-22)
+
+For gating a server you didn't write.
+
+- **Strict mode.** `wrap_upstream(..., trust_annotations=False)` and `confirm-gate serve --strict` ignore the upstream's `readOnlyHint`: only the tools you list as reads pass through, and everything else waits for the user. A server that marks a delete as read-only no longer slips past the gate.
+- **Glob patterns** in `reads`, `writes` and `high_risk` (`--reads "get_*,list_*" --high-risk "delete_*"`).
+- **The approval page shows a wrapped tool's call readably:** the tool's name, then each argument on its own line, wrapped instead of running off the card. A lone high-risk card is labelled as the final check it is, rather than "asks twice".
+- **`examples/strands_agent.py`:** a Strands agent on Amazon Bedrock working through the gate.
+- CI builds the wheel, runs `twine check`, and installs it to run the command.
+
 ## 0.3.1 (2026-10-21)
 
 Third adversarial review, of 0.3.0 itself.

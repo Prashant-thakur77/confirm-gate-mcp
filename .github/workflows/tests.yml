@@ -13,3 +13,17 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: the wheel installs and the command runs
+        run: |
+          python -m venv /tmp/w && /tmp/w/bin/pip install dist/*.whl
+          /tmp/w/bin/confirm-gate serve --help
